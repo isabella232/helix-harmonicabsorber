@@ -2,6 +2,7 @@
   "dependencies": {
     "@adobe/helix-cli": "^13.0.3",
     "ferrum": "^1.7.0",
-    "lighthouse": "^6.4.1"
+    "lighthouse": "^6.4.1",
+    "minimist": "^1.2.5"
   }
 }

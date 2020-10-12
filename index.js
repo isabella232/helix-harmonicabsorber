@@ -2,10 +2,11 @@ const lighthouse = require('lighthouse');
 const chromeLauncher = require('chrome-launcher');
 const process = require('process');
 const fs = require('fs/promises');
+const minimist = require('minimist');
 
 const { resolve, dirname, basename } = require('path');
 const { mkdir } = fs;
-const { isdef, map, exec } = require('ferrum');
+const { isdef, map, exec, type } = require('ferrum');
 
 /// List of (async) functions to run on regular script exit
 const exitHandlers = [];
@@ -52,13 +53,19 @@ const runLighthouse = async (url, opts = {}) => {
   await writeFile(`${outDir}/report.html`, report);
 };
 
-const main = async () => {
-  await runLighthouse('https://cupdev.net');
+const main = async (...rawArgs) => {
+  const cmds = {
+    lighthouse: runLighthouse,
+  };
+
+  const opts = minimist(rawArgs);
+  const [cmd, ...pos] = opts._;
+  await cmds[cmd || 'lighthouse'](...pos, opts);
 };
 
 const init = async () => {
   try {
-    await main(process.argv.slice(2));
+    await main(...process.argv.slice(2));
     await Promise.all(map(exitHandlers, exec));
   } catch (e) {
     console.error(e);
