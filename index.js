@@ -6,7 +6,7 @@ const minimist = require('minimist');
 
 const { resolve, dirname, basename } = require('path');
 const { mkdir } = fs;
-const { isdef, map, exec, type } = require('ferrum');
+const { isdef, map, exec, type, range } = require('ferrum');
 
 /// List of (async) functions to run on regular script exit
 const exitHandlers = [];
@@ -35,22 +35,23 @@ const getChrome = async () => {
 };
 
 const runLighthouse = async (url, opts = {}) => {
-  let {
-    outDir = ({finalUrl, fetchTime}) => `${new URL(finalUrl).host}_${fetchTime}`
-  } = opts;
+  let { repeat = 1, } = opts;
 
   const chrome = await getChrome();
+  const outDir = `${new URL(url).host}_${new Date().toISOString()}`;
 
-  const { report, lhr } = await lighthouse(url, {
-    logLevel: 'info',
-    output: 'html',
-    onlyCategories: ['performance'],
-    port: chrome.port
-  });
+  for (const idx of range(0, repeat)) {
 
-  outDir = type(outDir) === Function ? outDir(lhs) : outDir;
-  await writeFile(`${outDir}/report.json`, JSON.stringify(lhr));
-  await writeFile(`${outDir}/report.html`, report);
+    const { report, lhr } = await lighthouse(url, {
+      logLevel: 'info',
+      output: 'html',
+      onlyCategories: ['performance'],
+      port: chrome.port
+    });
+
+    await writeFile(`${outDir}/${idx}/report.json`, JSON.stringify(lhr));
+    await writeFile(`${outDir}/${idx}/report.html`, report);
+  }
 };
 
 const main = async (...rawArgs) => {
