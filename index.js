@@ -3,10 +3,15 @@ const chromeLauncher = require('chrome-launcher');
 const process = require('process');
 const fs = require('fs/promises');
 const minimist = require('minimist');
+const glob = require('fast-glob');
+const jstat = require('jstat');
 
+const { abs } = Math;
+const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
-const { mkdir } = fs;
-const { isdef, map, exec, type, range, curry, setdefault, filter, each } = require('ferrum');
+const { mkdir, readFile } = fs;
+const { isdef, map, exec, type, range, curry, setdefault, filter, each, identity, mapSort, list, pipe} = require('ferrum');
+const { corrcoeff, spearmancoeff, mean, median, variance, deviation, stdev, meansqerr, skewness } = jstat;
 
 /// Like ferrum filter but applied specifically to the key of key
 /// value pairs.
@@ -70,29 +75,100 @@ const runLighthouse = async (url, opts = {}) => {
 
     await writeFile(`${outDir}/${idx}/report.json`, JSON.stringify(lhr));
     await writeFile(`${outDir}/${idx}/report.html`, report);
-
-    // Metrics
-
-    const addMetric = (name, val) => {
-      if (isdef(val)) {
-        const series = setdefault(metrics, name, [])
-        series[idx] = val;
-      }
-    };
-
-    addMetric('performance_score', lhr.categories.performance.score);
-    each(lhr.audits, ([audit, data]) => {
-      addMetric(audit, data.numericValue);
-      addMetric(`${audit}_score`, data.score);
-    });
-
-    await writeFile(`${outDir}/metrics.js`, JSON.stringify(metrics));
   }
+};
+
+const analyze = async (dir) => {
+  const perf = {
+    val: [],
+  };
+  const metrics = {};
+
+  const addMetric = (name, type, idx, val) => {
+    if (isdef(val)) {
+      const meta = setdefault(metrics, name, {});
+      const obj = setdefault(meta, type, {})
+      const series = setdefault(obj, 'val', [])
+      series[idx] = val;
+    }
+  };
+
+  const reports = await glob('*/report.json', { cwd: dir });
+  await Promise.all(map(reports, async (file) => {
+    const no = Number(file.split('/')[0]);
+    const lhr = JSON.parse(await readFile(`${dir}/${no}/report.json`, 'utf8'));
+
+    perf.val[no] = lhr.categories.performance.score;
+    each(lhr.audits, ([audit, data]) => {
+      addMetric(audit, 'raw', no, data.numericValue);
+      addMetric(audit, 'score', no, data.score);
+    });
+  }));
+
+  const characterizeData = (dat) => ({
+    min: jstat.min(dat),
+    max: jstat.max(dat),
+    range: jstat.range(dat),
+    mean: mean(dat),
+    median: median(dat),
+
+    meansqerr: meansqerr(dat),
+    variance: variance(dat),
+    stdev: stdev(dat),
+    skewness: skewness(dat),
+  });
+
+  // Analyze statistical distributions of data collected
+  assign(perf, characterizeData(perf.val));
+  each(metrics, ([_, dat]) => {
+    if (isdef((dat.raw || {}).val))
+      assign(dat.raw, characterizeData(dat.raw.val));
+    if (isdef((dat.score || {}).val))
+      assign(dat.score, characterizeData(dat.score.val));
+  });
+
+  const characterizeCorrelation = (dat, dat2) => ({
+    rho: corrcoeff(dat, dat2),
+    spearman_rho: spearmancoeff(dat, dat2),
+  });
+
+  // Analyze correlation
+  each(metrics, ([_, met]) => {
+    if (isdef((met.raw || {}).val))
+      assign(met.raw, characterizeCorrelation(met.raw.val, perf.val));
+    if (isdef((met.score || {}).val))
+      assign(met.score, characterizeCorrelation(met.score.val, perf.val));
+  });
+
+  // Rank values
+  const ranks = {};
+  const mkrank = (name, type, val, norm = identity) => {
+    ranks[name] = pipe(
+      metrics,
+      map(([name, meta]) => [name, (meta[type] || {})[val]]),
+      filter(([_, v]) => isdef(v) && Number.isFinite(v)),
+      mapSort(([_, score]) => -norm(score)),
+    );
+  };
+
+  mkrank('rho',                'raw',   'rho',          abs);
+  mkrank('spearman_rho',       'raw',   'spearman_rho', abs);
+  mkrank('score_rho',          'score', 'rho',          abs);
+  mkrank('score_spearman_rho', 'score', 'spearman_rho', abs);
+
+  mkrank('mean',      'score', 'mean');
+  mkrank('median',    'score', 'median');
+  mkrank('meansqerr', 'score', 'meansqerr');
+  mkrank('stdev',     'score', 'stdev');
+  mkrank('skewness',  'score', 'skewness');
+
+  console.log(JSON.stringify({ perf, metrics, ranks }));
 };
 
 const main = async (...rawArgs) => {
   const cmds = {
     lighthouse: runLighthouse,
+    analyze,
   };
 
   const opts = minimist(rawArgs);
