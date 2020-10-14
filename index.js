@@ -29,6 +29,12 @@ const mapKey = curry('mapKey', (seq, fn) =>
 /// List of (async) functions to run on regular script exit
 const exitHandlers = [];
 
+/// Deconstructs a sequence into initial sequence and tail
+const splitLast = (seq) => {
+  const s = list(seq);
+  return [s, s.pop()];
+}
+
 /// Resolve path and decompose into directory/base
 /// String -> [String, String]
 const dirfile = (path) => {
@@ -57,24 +63,32 @@ const getChrome = async () => {
   return chromeInstance;
 };
 
-const runLighthouse = async (url, opts = {}) => {
-  let { repeat = 1, } = opts;
+/// runLighthouse(...urls, opts={});
+const runLighthouse = async (...args) => {
+  const [urls, opts] = splitLast(args);
+  if (type(opts) !== Object)
+    return runLighthouse(...urls, opts, {});
+  const { repeat = 1 } = opts;
 
   const chrome = await getChrome();
-  const outDir = `${new URL(url).host}_${new Date().toISOString()}`;
+  const outDir = `harmonicabsorber_${new Date().toISOString()}`;
 
   const metrics = {};
 
-  for (const idx of range(0, repeat)) {
-    const { report, lhr } = await lighthouse(url, {
-      logLevel: 'info',
-      output: 'html',
-      onlyCategories: ['performance'],
-      port: chrome.port
-    });
+  for (const url of urls) {
+    const host = new URL(url).host;
+    for (const idx of range(0, repeat)) {
+      const { report, lhr } = await lighthouse(url, {
+        logLevel: 'info',
+        output: 'html',
+        onlyCategories: ['performance'],
+        port: chrome.port
+      });
 
-    await writeFile(`${outDir}/${idx}/report.json`, JSON.stringify(lhr));
-    await writeFile(`${outDir}/${idx}/report.html`, report);
+      const dir = `${outDir}/${host}/${String(idx).padStart(6, '0')}`;
+      await writeFile(`${dir}/report.json`, JSON.stringify(lhr));
+      await writeFile(`${dir}/report.html`, report);
+    }
   }
 };
 
