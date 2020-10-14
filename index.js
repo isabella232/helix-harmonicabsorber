@@ -110,7 +110,7 @@ const analyze = async (dir) => {
   const reports = await glob('*/report.json', { cwd: dir });
   await Promise.all(map(reports, async (file) => {
     const no = Number(file.split('/')[0]);
-    const lhr = JSON.parse(await readFile(`${dir}/${no}/report.json`, 'utf8'));
+    const lhr = JSON.parse(await readFile(`${dir}/${file}`, 'utf8'));
 
     perf.val[no] = lhr.categories.performance.score;
     each(lhr.audits, ([audit, data]) => {
