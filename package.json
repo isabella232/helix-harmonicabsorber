@@ -4,7 +4,7 @@
     "fast-glob": "^3.2.4",
     "ferrum": "^1.7.0",
     "jstat": "^1.9.4",
-    "lighthouse": "^6.4.1",
+    "lighthouse": "https://github.com/koraa/lighthouse.git",
     "minimist": "^1.2.5"
   }
 }
