@@ -298,6 +298,8 @@ const main = async (...rawArgs) => {
 
 const init = async () => {
   try {
+    process.on('uncaughtException', (err, origin) => console.warn(err, origin));
+    process.on('unhandeledRejecion', (err) => console.warn(err));
     exitHandlers.push(() => rmdirSync(tmpdir, { recursive: true }));
     process.on('exit', () => each(exitHandlers, exec));
     await main(...process.argv.slice(2));
