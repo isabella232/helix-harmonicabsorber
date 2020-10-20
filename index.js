@@ -1,17 +1,45 @@
+const os = require('os');
+const assert = require('assert');
 const lighthouse = require('lighthouse');
 const chromeLauncher = require('chrome-launcher');
 const process = require('process');
-const fs = require('fs/promises');
+const fs = require('fs');
 const minimist = require('minimist');
 const glob = require('fast-glob');
 const jstat = require('jstat');
+const hoxy = require('hoxy');
+const child_process = require('child_process');
+const chrome_remote = require('chrome-remote-interface');
 
 const { abs } = Math;
 const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
-const { mkdir, readFile } = fs;
+const { rmdirSync } = fs;
+const { mkdir, readFile } = fs.promises;
+const { v4: uuidgen } = require('uuid');
 const { isdef, map, exec, type, range, curry, setdefault, filter, each, identity, mapSort, list, pipe} = require('ferrum');
 const { corrcoeff, spearmancoeff, mean, median, variance, deviation, stdev, meansqerr, skewness } = jstat;
+
+/// CONFIG
+
+const cakey = `${__dirname}/do_not_trust.key.pem`;
+const cacert = `${__dirname}/do_not_trust.crt.pem`;
+const tmpdir = `${os.tmpdir()}/harmonicabsorber-${new Date().toISOString()}-${uuidgen()}`
+
+/// Run the subcommand
+const exe = async (cmd, ...args /* , opts = {} */) => {
+  const opts = type(args[args.length - 1]) === Object ? args.pop() : {};
+  const proc = child_process.spawn(cmd, args, {
+    stdio: ['inherit', 'inherit', 'inherit'],
+    ...opts,
+  });
+  const code = await new Promise((res, rej) => {
+    proc.on('error', rej);
+    proc.on('exit', (code) => res(code));
+  });
+  assert.strictEqual(code, 0);
+  return proc;
+};
 
 /// Like ferrum filter but applied specifically to the key of key
 /// value pairs.
@@ -51,16 +79,92 @@ const linearizeJson = (v, _prefix = []) =>
 const writeFile = async (path, cont) => {
   const [dir, file] = dirfile(path);
   await mkdir(dir, { recursive: true });
-  await fs.writeFile(path, cont);
+  await fs.promises.writeFile(path, cont);
 };
 
-let chromeInstance = null;
-const getChrome = async () => {
-  if (!isdef(chromeInstance)) {
-    chromeInstance = await chromeLauncher.launch({chromeFlags: ['--headless']});
-    exitHandlers.push(() => chromeInstance.kill());
+class Proxychrome {
+  static create(...args) {
+    return Object.create(this.prototype)._init(...args);
   }
-  return chromeInstance;
+
+  constructor() {
+    assert(false, 'Use the static create() method to initialize this class');
+  }
+
+  async _init(opts) {
+    const {
+      headless,
+      port = 5050,
+      cache = false,
+      cachedir = `${tmpdir}/cache/`,
+    } = opts;
+    assign(this, { cache, cachedir, errCache: });
+
+    const beforReturn = [];
+
+    // Call destructor
+    exitHandlers.push(() => this._exit());
+
+    // Create cache dir
+    const pCachedir = mkdir(cachedir, { recursive: true });
+
+    // Load data
+    const [key, cert] = await Promise.all([readFile(cakey), readFile(cacert)]);
+    const proxyOpts = {
+      certAuthority: { key, cert },
+    };
+    this.proxy = hoxy.createServer(proxyOpts).listen(port);
+    this.proxy.intercept('request', (...args) => this._intercept(...args));
+    this.proxy.intercept('response', (...args) => this._intercept(...args));
+
+    // Launch chrome
+    this.chrome = await chromeLauncher.launch({
+      chromeFlags: [
+        ...(headless ? ['--headless'] : []),
+        `--proxy-server=http://localhost:${port}`,
+        `--ignore-certificate-errors`,
+      ]
+    });
+
+    await pCachedir;
+    return this;
+  }
+
+  async _intercept(req, resp, cycle) {
+    console.info(this.cache ? 'CACHED' : 'PASSTHROUGH', req.fullUrl());
+    if (!this.cache) return;
+    const path = [
+      this.cachedir,
+      req.hostname, '/',
+      req.url,
+      req.url.endsWith('/') ? '__INDEX' : ''
+    ];
+    cycle.serve({ strategy: 'mirror', path: path.join('') });
+ }
+
+  async _exit() {
+    if (isdef(this.chrome))
+      this.chrome.kill();
+  }
+}
+
+/// Start a proxy server on port 5050; this server will
+/// cache ALL GET requests by full URL; it will work on http as
+/// well as https traffic
+const proxychrome = async (opts) => {
+  await Proxychrome.create(opts);
+  await new Promise(() => {}); // Does not resolve
+};
+
+/// Create the mock certificate authority used to intercept ssl traffic
+const makeca = async () => {
+  await exe('openssl', 'genrsa',
+    '-out', cakey, '4096');
+  await exe('openssl', 'req', '-x509', '-new', '-nodes',
+    '-key', cakey,
+    '-out', cacert,
+    '-days', '10',
+    '-subj', '/C=US/ST=Utah/L=Provo/O=DO NOT TRUST Helix Dummy Signing Authority DO NOT TRUST/CN=project-helix.io');
 };
 
 /// runLighthouse(...urls, opts={});
@@ -68,9 +172,9 @@ const runLighthouse = async (...args) => {
   const [urls, opts] = splitLast(args);
   if (type(opts) !== Object)
     return runLighthouse(...urls, opts, {});
-  const { repeat = 1 } = opts;
+  const { repeat = 1, cache } = opts;
 
-  const chrome = await getChrome();
+  const { chrome, proxy } = await Proxychrome.create({ headless: true, cache });
   const outDir = `harmonicabsorber_${new Date().toISOString()}`;
 
   const metrics = {};
@@ -183,6 +287,8 @@ const main = async (...rawArgs) => {
   const cmds = {
     lighthouse: runLighthouse,
     analyze,
+    makeca,
+    proxychrome: (opts) => proxychrome({ idle: true, ...opts }),
   };
 
   const opts = minimist(rawArgs);
@@ -192,8 +298,10 @@ const main = async (...rawArgs) => {
 
 const init = async () => {
   try {
+    exitHandlers.push(() => rmdirSync(tmpdir, { recursive: true }));
+    process.on('exit', () => each(exitHandlers, exec));
     await main(...process.argv.slice(2));
-    await Promise.all(map(exitHandlers, exec));
+    process.exit();
   } catch (e) {
     console.error(e);
     process.exit(1);
