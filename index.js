@@ -131,16 +131,6 @@ class Proxychrome {
     return this;
   }
 
-  static _cacheKey(req) {
-    const path = [
-      this.cachedir,
-      req.hostname, '/',
-      req.url,
-      req.url.endsWith('/') ? '__INDEX' : ''
-    ];
-    return path.join("");
-  }
-
   async _interceptReq(req, resp, cycle) {
     if (!this.cache) return;
 
@@ -148,7 +138,7 @@ class Proxychrome {
     const cached = this.cacheIndex[key];
     if (cached) {
       //console.debug("CACHE HIT", key, cached);
-      resp.statusCode = 404;
+      resp.statusCode = cached.statusCode;
       each(cached.headers || {}, ([k, v]) => {
         resp.headers[k] = v
       });
