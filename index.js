@@ -98,7 +98,7 @@ class Proxychrome {
       cache = false,
       cachedir = `${tmpdir}/cache/`,
     } = opts;
-    assign(this, { cache, cachedir, errCache: });
+    assign(this, { cache, cachedir });
 
     const beforReturn = [];
 
