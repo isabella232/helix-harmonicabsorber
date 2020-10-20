@@ -97,8 +97,10 @@ class Proxychrome {
       port = 5050,
       cache = false,
       cachedir = `${tmpdir}/cache/`,
+      block: blockStr = null,
     } = opts;
-    assign(this, { cache, cachedir, cacheIndex: {}, fileCtr: 0 });
+    let block = isdef(blockStr) ? new RegExp(blockStr) : null;
+    assign(this, { cache, cachedir, block, cacheIndex: {}, fileCtr: 0 });
 
     const beforReturn = [];
 
@@ -132,15 +134,20 @@ class Proxychrome {
   }
 
   async _interceptReq(req, resp, cycle) {
-    if (!this.cache) return;
-
     const key = `${req.method} ${req.fullUrl()}`;
+    if (isdef(this.block) && key.match(this.block)) {
+      console.debug("BLOCKING", key);
+      resp.statusCode = 404;
+      return;
+    }
+
+    if (!this.cache) return;
     const cached = this.cacheIndex[key];
     if (cached) {
       //console.debug("CACHE HIT", key, cached);
       resp.statusCode = cached.statusCode;
       each(cached.headers || {}, ([k, v]) => {
-        resp.headers[k] = v
+        resp.headers[k] = v;;
       });
       resp._source = createReadStream(`${this.cachedir}/${cached.index}`);
     } else {
@@ -194,9 +201,10 @@ const runLighthouse = async (...args) => {
   const [urls, opts] = splitLast(args);
   if (type(opts) !== Object)
     return runLighthouse(...urls, opts, {});
-  const { repeat = 1, cache } = opts;
+  const { repeat = 1, cache, cachedir, block } = opts;
 
-  const { chrome, proxy } = await Proxychrome.create({ headless: true, cache });
+  const { chrome, proxy } = await Proxychrome.create({
+    headless: true, cache, cachedir, block });
   const outDir = `harmonicabsorber_${new Date().toISOString()}`;
 
   const metrics = {};
