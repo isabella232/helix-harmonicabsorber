@@ -14,7 +14,7 @@ const chrome_remote = require('chrome-remote-interface');
 const { abs } = Math;
 const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
-const { rmdirSync } = fs;
+const { rmdirSync, createReadStream, createWriteStream } = fs;
 const { mkdir, readFile } = fs.promises;
 const { v4: uuidgen } = require('uuid');
 const { isdef, map, exec, type, range, curry, setdefault, filter, each, identity, mapSort, list, pipe} = require('ferrum');
@@ -98,7 +98,7 @@ class Proxychrome {
       cache = false,
       cachedir = `${tmpdir}/cache/`,
     } = opts;
-    assign(this, { cache, cachedir, extcache: {} });
+    assign(this, { cache, cachedir, cacheIndex: {}, fileCtr: 0 });
 
     const beforReturn = [];
 
@@ -142,36 +142,35 @@ class Proxychrome {
 
   async _interceptReq(req, resp, cycle) {
     if (!this.cache) return;
-    const key = type(this)._cacheKey(req);
-    const { extStatus: stat, ...ext } = this.extcache[key] || {};
-    if (stat === 404) {
-      console.debug("CACHE 404", req.fullUrl());
+
+    const key = `${req.method} ${req.fullUrl()}`;
+    const cached = this.cacheIndex[key];
+    if (cached) {
+      console.debug("CACHE HIT", key, cached);
       resp.statusCode = 404;
-
-    } else if (stat === 302) {
-      console.debug("CACHE 302", req.fullUrl(), " -> ", ext.location);
-      resp.statusCode = 302;
-      resp.headers['location'] = ext.location;
-
+      each(cached.headers || {}, ([k, v]) => {
+        resp.headers[k] = v
+      });
+      resp._source = createReadStream(`${this.cachedir}/${cached.index}`);
     } else {
-      console.debug("CACHE DATA", req.fullUrl());
-      cycle.serve({ strategy: 'mirror', path });
+      console.debug("CACHE MISS", key);
     }
+  }
 
- }
   async _interceptResp(req, resp, cycle) {
-    const stat = resp.statusCode;
-    if (stat === 200 || !this.cache)
-      return;
+    if (!this.cache) return;
 
-    const key = type(this)._cacheKey(req);
-    if (stat === 404)  {
-      this.extcache[key] = { statusCode: 404 };
-    } else if (resp.statusCode === 302) {
-      this.extcache[key] = { statusCode: 302, location: resp.headers['location'] };
-    } else {
-      console.debug(`UNEXPECTED STATUS CODE: ${req.fullUrl()} -> ${resp.statusCode}`)
-    }
+    const key = `${req.method} ${req.fullUrl()}`;
+    if (this.cacheIndex[key]) return; // cache hit
+
+    const cached = {
+      headers: resp.headers,
+      statusCode: resp.statusCode,
+      index: this.fileCtr++,
+    };
+    console.debug("CREATE CACHE ENTRY ", key, cached);
+    this.cacheIndex[key] = cached;
+    resp.tee(createWriteStream(`${this.cachedir}/${cached.index}`));
   }
 
   async _exit() {
