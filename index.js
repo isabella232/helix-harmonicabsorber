@@ -98,7 +98,7 @@ class Proxychrome {
       cache = false,
       cachedir = `${tmpdir}/cache/`,
     } = opts;
-    assign(this, { cache, cachedir });
+    assign(this, { cache, cachedir, extcache: {} });
 
     const beforReturn = [];
 
@@ -114,8 +114,8 @@ class Proxychrome {
       certAuthority: { key, cert },
     };
     this.proxy = hoxy.createServer(proxyOpts).listen(port);
-    this.proxy.intercept('request', (...args) => this._intercept(...args));
-    this.proxy.intercept('response', (...args) => this._intercept(...args));
+    this.proxy.intercept('request', (...args) => this._interceptReq(...args));
+    this.proxy.intercept('response', (...args) => this._interceptResp(...args));
 
     // Launch chrome
     this.chrome = await chromeLauncher.launch({
@@ -130,17 +130,49 @@ class Proxychrome {
     return this;
   }
 
-  async _intercept(req, resp, cycle) {
-    console.info(this.cache ? 'CACHED' : 'PASSTHROUGH', req.fullUrl());
-    if (!this.cache) return;
+  static _cacheKey(req) {
     const path = [
       this.cachedir,
       req.hostname, '/',
       req.url,
       req.url.endsWith('/') ? '__INDEX' : ''
     ];
-    cycle.serve({ strategy: 'mirror', path: path.join('') });
+    return path.join("");
+  }
+
+  async _interceptReq(req, resp, cycle) {
+    if (!this.cache) return;
+    const key = type(this)._cacheKey(req);
+    const { extStatus: stat, ...ext } = this.extcache[key] || {};
+    if (stat === 404) {
+      console.debug("CACHE 404", req.fullUrl());
+      resp.statusCode = 404;
+
+    } else if (stat === 302) {
+      console.debug("CACHE 302", req.fullUrl(), " -> ", ext.location);
+      resp.statusCode = 302;
+      resp.headers['location'] = ext.location;
+
+    } else {
+      console.debug("CACHE DATA", req.fullUrl());
+      cycle.serve({ strategy: 'mirror', path });
+    }
+
  }
+  async _interceptResp(req, resp, cycle) {
+    const stat = resp.statusCode;
+    if (stat === 200 || !this.cache)
+      return;
+
+    const key = type(this)._cacheKey(req);
+    if (stat === 404)  {
+      this.extcache[key] = { statusCode: 404 };
+    } else if (resp.statusCode === 302) {
+      this.extcache[key] = { statusCode: 302, location: resp.headers['location'] };
+    } else {
+      console.debug(`UNEXPECTED STATUS CODE: ${req.fullUrl()} -> ${resp.statusCode}`)
+    }
+  }
 
   async _exit() {
     if (isdef(this.chrome))
