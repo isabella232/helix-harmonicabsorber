@@ -122,6 +122,7 @@ class Proxychrome {
       chromeFlags: [
         ...(headless ? ['--headless'] : []),
         `--proxy-server=http://localhost:${port}`,
+        `--proxy-bypass-list=<-loopback>`,
         `--ignore-certificate-errors`,
       ]
     });
@@ -146,7 +147,7 @@ class Proxychrome {
     const key = `${req.method} ${req.fullUrl()}`;
     const cached = this.cacheIndex[key];
     if (cached) {
-      console.debug("CACHE HIT", key, cached);
+      //console.debug("CACHE HIT", key, cached);
       resp.statusCode = 404;
       each(cached.headers || {}, ([k, v]) => {
         resp.headers[k] = v
@@ -168,7 +169,7 @@ class Proxychrome {
       statusCode: resp.statusCode,
       index: this.fileCtr++,
     };
-    console.debug("CREATE CACHE ENTRY ", key, cached);
+    //console.debug("CREATE CACHE ENTRY ", key, cached);
     this.cacheIndex[key] = cached;
     resp.tee(createWriteStream(`${this.cachedir}/${cached.index}`));
   }
