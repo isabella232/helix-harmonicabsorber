@@ -93,7 +93,7 @@ const npx = (...args) => {
 }
 
 /// Spawn a helix simulator
-const helixCliUp = async (name, repo, commit, ...args) => {
+const helixCliUp = async (name, repo, branch, commit, ...args) => {
   const { port, ...opts } = type(args[args.length - 1]) === Object ? args.pop() : {};
   const cwd = `${__dirname}/assets/repos/${name}`;
 
@@ -103,7 +103,7 @@ const helixCliUp = async (name, repo, commit, ...args) => {
   }
 
   // Checkout commit
-  await exe('git', 'checkout', commit, { cwd }).onExit;
+  await exe('git', 'checkout', '-B', branch, commit, { cwd }).onExit;
 
   const commandLine = [
     'hlx', 'up', '--no-open', '--log-level=warn',
@@ -194,11 +194,13 @@ class Proxychrome extends AsyncCls {
         {
           name: 'pages',
           repo: 'https://github.com/adobe/pages',
+          branch: 'master',
           commit: 'fb689eebd031b581915d4010c96150ba3fdcaba4',
           port: 27666
         },
         {
           name: 'david-pages',
+          branch: 'karo/david-nomartech',
           repo: 'https://github.com/koraa/pages',
           commit: '2fa29c4',
           port: 12914
@@ -232,8 +234,8 @@ class Proxychrome extends AsyncCls {
     // Start helix instances
     this.helix = list(helix);
     for (const inst of this.helix) {
-      const {name, repo, commit, ...hlxOpts} = inst;
-      assign(inst, await helixCliUp(name, repo, commit, hlxOpts));
+      const {name, repo, branch, commit, ...hlxOpts} = inst;
+      assign(inst, await helixCliUp(name, repo, branch, commit, hlxOpts));
     }
 
     // Create cache dir
