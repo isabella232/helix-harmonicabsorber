@@ -406,7 +406,7 @@ const lighthouse = async (...args) => {
   for (const url of urls) {
     const host = new URL(url).host;
     for (const idx of range(0, repeat)) {
-      const { report, lhr } = await liblighthouse(url, {
+      const { report, lhr, artifacts } = await liblighthouse(url, {
         logLevel: 'error',
         output: 'html',
         onlyCategories: ['performance'],
@@ -415,6 +415,7 @@ const lighthouse = async (...args) => {
 
       const dir = `${out}/${host}/${String(idx).padStart(6, '0')}`;
       await writeFile(`${dir}/report.json`, JSON.stringify(lhr));
+      await writeFile(`${dir}/artifacts.json`, JSON.stringify(artifacts));
       await writeFile(`${dir}/report.html`, report);
     }
   }
