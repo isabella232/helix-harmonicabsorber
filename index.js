@@ -24,6 +24,7 @@ const {
   mapSort, list, pipe, contains, is, keys, shallowclone, obj, dict,
   chunkify,
 } = require("ferrum");
+const {isPlainObject} = require('lodash');
 
 /// CONFIG
 
@@ -398,7 +399,7 @@ const lighthouse = async (...args) => {
 
   if (type(proxychrome) === String)
     proxychrome = yaml.parse(proxychrome);
-  if (type(proxychrome) === Object)
+  if (isPlainObject()(proxychrome) === Object)
     proxychrome = await Proxychrome.create(
       {headless: true, ...proxychrome});
 
@@ -515,7 +516,7 @@ const standardTests = async (opts) => {
 
   if (type(proxychrome) === String)
     proxychrome = yaml.parse(proxychrome);
-  if (type(proxychrome) === Object)
+  if (isPlainObject(proxychrome))
     proxychrome = await Proxychrome.create(
       {headless: true, helixStd: true, ...proxychrome});
 
