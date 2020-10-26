@@ -1,6 +1,6 @@
 const os = require('os');
 const assert = require('assert');
-const lighthouse = require('lighthouse');
+const liblighthouse = require('lighthouse');
 const chromeLauncher = require('chrome-launcher');
 const process = require('process');
 const fs = require('fs');
@@ -10,6 +10,7 @@ const jstat = require('jstat');
 const hoxy = require('hoxy');
 const child_process = require('child_process');
 const chrome_remote = require('chrome-remote-interface');
+const yaml = require('yaml');
 
 const { abs } = Math;
 const { assign } = Object;
@@ -17,14 +18,51 @@ const { resolve, dirname, basename } = require('path');
 const { rmdirSync, createReadStream, createWriteStream } = fs;
 const { mkdir, readFile } = fs.promises;
 const { v4: uuidgen } = require('uuid');
-const { isdef, map, exec, type, range, curry, setdefault, filter, each, identity, mapSort, list, pipe} = require('ferrum');
-const { corrcoeff, spearmancoeff, mean, median, variance, deviation, stdev, meansqerr, skewness } = jstat;
+const { corrcoeff, spearmancoeff, mean, median, variance, stdev, meansqerr, skewness } = jstat;
+const {
+  isdef, map, exec, type, range, curry, setdefault, filter, each, identity,
+  mapSort, list, pipe, contains, is, keys, shallowclone, obj, dict,
+  chunkify,
+} = require("ferrum");
 
 /// CONFIG
 
-const cakey = `${__dirname}/do_not_trust.key.pem`;
-const cacert = `${__dirname}/do_not_trust.crt.pem`;
-const tmpdir = `${os.tmpdir()}/harmonicabsorber-${new Date().toISOString()}-${uuidgen()}`
+const cakey = `${__dirname}/assets/do_not_trust.key.pem`;
+const cacert = `${__dirname}/assets/do_not_trust.crt.pem`;
+const procId = uuidgen();
+const procTime = new Date();
+const procTimeStr = procTime.toISOString().replace(/:/g, "-")
+const tmpdir = `${os.tmpdir()}/harmonicabsorber-${procTimeStr}-${procId}`
+
+const backupProps = (o, props) => obj(map(props, k => [k, o[k]]));
+const is_any = (v, ts) => contains(ts, is(type(v)));
+const assignDefaults = (o, pairs) => {
+  each(pairs, ([k, v]) => {
+    if (k in o) return;
+    o[k] = v;
+  });
+};
+
+const throws = (fn) => {
+  try {
+    fn();
+    return false;
+  } catch (_) {
+    return true;
+  }
+};
+
+const is_url = (s) => !throws(() => new URL(s));
+
+/// Test if a file is accessible
+const isAccessible = async (path) => {
+  try {
+    await fs.promises.access(path);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
 
 /// Run the subcommand
 const exe = async (cmd, ...args /* , opts = {} */) => {
@@ -33,20 +71,53 @@ const exe = async (cmd, ...args /* , opts = {} */) => {
     stdio: ['inherit', 'inherit', 'inherit'],
     ...opts,
   });
-  const code = await new Promise((res, rej) => {
+  const onExit = new Promise((res, rej) => {
     proc.on('error', rej);
     proc.on('exit', (code) => res(code));
-  });
-  assert.strictEqual(code, 0);
-  return proc;
+  }).then((code) => assert.strictEqual(code, 0));
+  return { proc, onExit };
 };
+
+/// Run a command; potentially a node command
+const npx = (...args) => {
+  const opts = type(args[args.length - 1]) === Object ? args.pop() : {};
+  const { env = process.env } = opts;
+  const { PATH = process.env.PATH } = env;
+  return exe(...args, {
+    env: {
+      ...env,
+      PATH: `${__dirname}/node_modules/.bin/:${PATH}`,
+    },
+    ...opts,
+  });
+}
+
+/// Spawn a helix simulator
+const helixCliUp = async (name, repo, commit, ...args) => {
+  const { port, ...opts } = type(args[args.length - 1]) === Object ? args.pop() : {};
+  const cwd = `${__dirname}/assets/repos/${name}`;
+
+  // Clone git repo if necessary
+  if (!(await isAccessible(cwd))) {
+    await exe('git', 'clone', repo, cwd).onExit;
+  }
+
+  // Checkout commit
+  await exe('git', 'checkout', commit, { cwd }).onExit;
+
+  const commandLine = [
+    'hlx', 'up', '--no-open', '--log-level=warn',
+    ...(isdef(port) ? ['--port', port]: []),
+  ];
+  return npx(...commandLine, ...args, { cwd, ...opts, });
+}
 
 /// Like ferrum filter but applied specifically to the key of key
 /// value pairs.
 ///
 /// (* -> IntoBool) -> Sequence<[*, *]> -> Sequence<[*, *]>
 const filterKey = curry('filterKey', (seq, fn) =>
-  filter(seq, ([k, v]) => fn(k)));
+  filter(seq, ([k, _]) => fn(k)));
 
 /// Like ferrum map but transforms the key specifically from key/value pairs.
 ///
@@ -77,38 +148,96 @@ const linearizeJson = (v, _prefix = []) =>
 
 /// Write file; creating the dir if need be
 const writeFile = async (path, cont) => {
-  const [dir, file] = dirfile(path);
+  const [dir, _] = dirfile(path);
   await mkdir(dir, { recursive: true });
   await fs.promises.writeFile(path, cont);
 };
 
-class Proxychrome {
-  static create(...args) {
-    return Object.create(this.prototype)._init(...args);
+
+class AsyncCls {
+  static async create(...args) {
+    const r =  Object.create(this.prototype);
+    await r._init(...args);
+    exitHandlers.push(() => r._exit());
+    return r;
   }
 
   constructor() {
-    assert(false, 'Use the static create() method to initialize this class');
+    assert(false, `Use the static create() method to initialize ${typename(type(this))}.`);
   }
 
+  _init() {}
+  _exit() {}
+}
+
+class Proxychrome extends AsyncCls {
   async _init(opts) {
-    const {
-      headless,
+    let {
       port = 5050,
-      cache = false,
+      cacheEnabled = false,
       cachedir = `${tmpdir}/cache/`,
-      block: blockStr = null,
+      headless = false,
+      helixStd = false,
+      helix = [],
+      rules = [],
     } = opts;
-    let block = isdef(blockStr) ? new RegExp(blockStr) : null;
-    assign(this, { cache, cachedir, block, cacheIndex: {}, fileCtr: 0 });
 
-    const beforReturn = [];
+    // Provide helix env
+    if (helixStd) {
+      rules = [
+        ...rules,
+        { match: 'localhost:10768/', hostname: 'pages.proxy-virtual' },
+        { match: 'localhost:24030/', hostname: 'david-pages.proxy-virtual' },
+      ];
+      helix = [
+        ...helix,
+        {
+          name: 'pages',
+          repo: 'https://github.com/adobe/pages',
+          commit: 'fb689eebd031b581915d4010c96150ba3fdcaba4',
+          port: 27666
+        },
+        {
+          name: 'david-pages',
+          repo: 'https://github.com/koraa/pages',
+          commit: '2fa29c4',
+          port: 12914
+        },
+      ];
+    }
 
-    // Call destructor
-    exitHandlers.push(() => this._exit());
+    // Parse Rules
+    rules = pipe(
+      // Enforce rules being a list
+      is_any(rules, [String]) ? [rules] : rules,
+      // Parse json inputs
+      map(dat => is_any(dat, [String]) ? yaml.parse(dat) : dat),
+      // Enforce match being a regexp
+      map(({ match, ...rest }) => ({
+        match: new RegExp(match),
+        ...rest,
+      })),
+      list,
+    );
+
+    // Local variables
+    assign(this, {
+      cacheIndex: {},
+      fileCtr: 0,
+      cacheEnabled: Boolean(cacheEnabled),
+      cachedir,
+      rules, helix
+    });
+
+    // Start helix instances
+    this.helix = list(helix);
+    for (const inst of this.helix) {
+      const {name, repo, commit, ...hlxOpts} = inst;
+      assign(inst, await helixCliUp(name, repo, commit, hlxOpts));
+    }
 
     // Create cache dir
-    const pCachedir = mkdir(cachedir, { recursive: true });
+    await mkdir(cachedir, { recursive: true });
 
     // Load data
     const [key, cert] = await Promise.all([readFile(cakey), readFile(cacert)]);
@@ -124,56 +253,111 @@ class Proxychrome {
       chromeFlags: [
         ...(headless ? ['--headless'] : []),
         `--proxy-server=http://localhost:${port}`,
-        `--proxy-bypass-list=<-loopback>`,
+        `--proxy-bypass-list=<-loopback>;<-local>`,
         `--ignore-certificate-errors`,
       ]
     });
 
-    await pCachedir;
     return this;
   }
 
   async _interceptReq(req, resp, cycle) {
-    const key = `${req.method} ${req.fullUrl()}`;
-    if (isdef(this.block) && key.match(this.block)) {
-      console.debug("BLOCKING", key);
+    assignDefaults(req, {
+      cacheEnabled: this.cacheEnabled,
+      hosting: undefined,
+      block: undefined,
+      hostedFile: undefined,
+      key: `${req.method} ${req.fullUrl()}`,
+    });
+
+    // Parse rules
+    for (const {match, inverse = false, ...opts} of this.rules) {
+      if (!req.key.match(match) ^ inverse) continue;
+      assign(req, opts);
+
+      // URL Rewriting
+      const dest = `${req.method} ${req.fullUrl()}`;
+      if (dest === req.key) continue;
+      console.debug(`FORWARD ${req.key} -> ${dest}`);
+      req.key = dest;
+      return this._interceptReq(req, resp, cycle)
+    }
+
+    // Handle Proxy-virtual domains
+    if (req.hostname.match(/\.proxy-virtual$/)) {
+      const sub = req.hostname.split('.')[0];
+      req.hosting = `${__dirname}/assets/static/${sub}/`;
+    }
+
+    // Handle blocking
+    if (req.block) {
+      console.debug("BLOCKING", req.key);
       resp.statusCode = 404;
       return;
     }
 
-    if (!this.cache) return;
-    const cached = this.cacheIndex[key];
-    if (cached) {
-      //console.debug("CACHE HIT", key, cached);
-      resp.statusCode = cached.statusCode;
-      each(cached.headers || {}, ([k, v]) => {
-        resp.headers[k] = v;;
-      });
-      resp._source = createReadStream(`${this.cachedir}/${cached.index}`);
-    } else {
-      console.debug("CACHE MISS", key);
+    // Handle static hosting
+    if (isdef(req.hosting) && !isdef(req.hostedFile)) {
+      req.hostedFile = `${req.hosting}/${new URL(req.fullUrl()).pathname}`;
+      console.debug("STATIC HOSTING", req.key, "in", req.hostedFile);
+    }
+
+    // Handle Caching
+    if (req.cacheEnabled && !isdef(req.hostedFile)) {
+      const cached = this.cacheIndex[req.key];
+      if (cached) {
+        //console.debug("CACHE HIT", req.key, cached);
+        resp.statusCode = cached.statusCode;
+        each(cached.headers || {}, ([k, v]) => {
+          resp.headers[k] = v;
+        });
+        req.hostedFile = `${this.cachedir}/${cached.index}`;
+      } else {
+        console.debug("CACHE MISS", req.key);
+      }
+    }
+
+    // Serve local files
+    if (isdef(req.hostedFile)) {
+      try {
+        resp._source = await new Promise((res, rej) => {
+          const str = createReadStream(req.hostedFile);
+          str.on('error', rej);
+          str.on('open', () => res(str));
+        });
+        if (!isdef(resp.statusCode))
+          resp.statusCode = 200;
+      } catch (e) {
+        if (e.code === 'ENOENT') {
+          resp.statusCode = 404;
+        } else {
+          resp.statusCode = 500;
+          console.error(`${e.key}:\n\tException while serving file: ${req.hostedFile}:`, e);
+        }
+      }
     }
   }
 
   async _interceptResp(req, resp, cycle) {
-    if (!this.cache) return;
+    if (!req.cacheEnabled) return;
 
-    const key = `${req.method} ${req.fullUrl()}`;
-    if (this.cacheIndex[key]) return; // cache hit
+    if (this.cacheIndex[req.key]) return; // cache hit
 
     const cached = {
       headers: resp.headers,
       statusCode: resp.statusCode,
       index: this.fileCtr++,
     };
-    //console.debug("CREATE CACHE ENTRY ", key, cached);
-    this.cacheIndex[key] = cached;
+    //console.debug("CREATE CACHE ENTRY ", req.key, cached);
+    this.cacheIndex[req.key] = cached;
     resp.tee(createWriteStream(`${this.cachedir}/${cached.index}`));
   }
 
   async _exit() {
     if (isdef(this.chrome))
       this.chrome.kill();
+    each(this.helix, ({ proc }) =>
+      proc.kill());
   }
 }
 
@@ -188,38 +372,43 @@ const proxychrome = async (opts) => {
 /// Create the mock certificate authority used to intercept ssl traffic
 const makeca = async () => {
   await exe('openssl', 'genrsa',
-    '-out', cakey, '4096');
+    '-out', cakey, '4096').onExit;
   await exe('openssl', 'req', '-x509', '-new', '-nodes',
     '-key', cakey,
     '-out', cacert,
     '-days', '10',
-    '-subj', '/C=US/ST=Utah/L=Provo/O=DO NOT TRUST Helix Dummy Signing Authority DO NOT TRUST/CN=project-helix.io');
+    '-subj', '/C=US/ST=Utah/L=Provo/O=DO NOT TRUST Helix Dummy Signing Authority DO NOT TRUST/CN=project-helix.io').onExit;
 };
 
-/// runLighthouse(...urls, opts={});
-const runLighthouse = async (...args) => {
+/// lighthouse(...urls, opts={});
+const lighthouse = async (...args) => {
   const [urls, opts] = splitLast(args);
   if (type(opts) !== Object)
-    return runLighthouse(...urls, opts, {});
-  const { repeat = 1, cache, cachedir, block } = opts;
+    return lighthouse(...urls, opts, {});
 
-  const { chrome, proxy } = await Proxychrome.create({
-    headless: true, cache, cachedir, block });
-  const outDir = `harmonicabsorber_${new Date().toISOString()}`;
+  let {
+    repeat = 1,
+    proxychrome = {},
+    out = `harmonicabsorber_site_${procTimeStr}`,
+  } = opts;
 
-  const metrics = {};
+  if (type(proxychrome) === String)
+    proxychrome = yaml.parse(proxychrome);
+  if (type(proxychrome) === Object)
+    proxychrome = await Proxychrome.create(
+      {headless: true, ...proxychrome});
 
   for (const url of urls) {
     const host = new URL(url).host;
     for (const idx of range(0, repeat)) {
-      const { report, lhr } = await lighthouse(url, {
-        logLevel: 'info',
+      const { report, lhr } = await liblighthouse(url, {
+        logLevel: 'error',
         output: 'html',
         onlyCategories: ['performance'],
-        port: chrome.port
+        port: proxychrome.chrome.port
       });
 
-      const dir = `${outDir}/${host}/${String(idx).padStart(6, '0')}`;
+      const dir = `${out}/${host}/${String(idx).padStart(6, '0')}`;
       await writeFile(`${dir}/report.json`, JSON.stringify(lhr));
       await writeFile(`${dir}/report.html`, report);
     }
@@ -313,17 +502,104 @@ const analyze = async (dir) => {
   console.log(JSON.stringify({ perf, metrics, ranks }));
 };
 
+const standardTests = async (opts) => {
+  let {
+    repeat = 100,
+    proxychrome = {},
+    out = `harmonicabsorber_${procTimeStr}`,
+  } = opts;
+
+  if (type(proxychrome) === String)
+    proxychrome = yaml.parse(proxychrome);
+  if (type(proxychrome) === Object)
+    proxychrome = await Proxychrome.create(
+      {headless: true, helixStd: true, ...proxychrome});
+
+  let ctr = 0;
+  const T = async (...mods) => {
+    const opts_ = is_any(mods[mods.length - 1], [Object]) ? mods.pop() : {};
+    const opts = pipe(opts_, ...mods);
+    let {
+      name: basename, url, rules = [], cacheEnabled = false, ...rest
+    } = opts;
+
+    const name = [
+      ...(isdef(basename) ? [basename] : []),
+      ...map(mods, ({name}) => name),
+    ].join('+').replace(/_/g, '+');
+
+    console.debug("RUN LIGHTHOUSE ", name, {rules, cacheEnabled, url, ...rest });
+
+    const backup = backupProps(proxychrome, ['rules', 'cacheEnabled']);
+    try {
+      assign(proxychrome, {
+        rules: [...rules, proxychrome.rules],
+        cacheEnabled,
+      });
+      await lighthouse(url, {
+        out: `${out}/${String(ctr).padStart(6, '0')}-${name}`,
+        repeat, proxychrome, ...rest,
+      });
+    } finally {
+      assign(proxychrome, backup);
+    }
+  };
+
+  // Envs
+  const envs = dict(chunkify(2)([
+    'empty', 'http://baseline.proxy-virtual/empty.html',
+    'simulator', 'http://localhost:27666/creativecloud/en/ete/how-adobe-apps-work-together/',
+    'pages', 'https://pages--adobe.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/',
+    'online', 'https://pages.adobe.com/illustrator/en/tl/thr-illustration-home/',
+    'simulator_statified', 'http://localhost:10768/illustrator/en/tl/thr-illustration-home/index.html',
+    'simulator_david', 'http://localhost:12914/creativecloud/en/ete/how-adobe-apps-work-together/',
+    'pages_david', 'https://pages--davidnuescheler.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/',
+    'simulator_statified_david', 'http://localhost:24030/illustrator/en/tl/thr-illustration-home/index.html',
+  ]));
+
+  // Mods
+  const addRules = ({ rules = [], ...opts }, newRules) => ({
+    ...opts,
+    rules: [...newRules, ...rules,],
+  });
+  const simulator = (opts) => ({ url: envs.get('simulator'), ...opts});
+  const cached = (opts) => ({ cacheEnabled: true, ...opts });
+  const nointeractive = (opts) => addRules(opts, [
+    { match: /stats.adobe.com|facebook.com|facebook.net/, block: true },
+  ]);
+  const noadtech = (opts) => addRules(nointeractive(opts), [
+    { match: /adobe-privacy\/latest\/privacy.min|marketingtech|demdex.net|cookielaw.org|geolocation.onetrust.com/, block: true },
+  ]);
+  const noexternal = (opts) => addRules(opts, [
+    { match: /::1|127.0.0.1|localhost/, block: true, inverse: true },
+  ]);
+  const nocss = (opts) => addRules(opts, [
+    { match: /\.css([?#])/, block: true },
+  ]);
+  const nojs = (opts) => addRules(opts, [
+    { match: /\.js([?#])/, block: true },
+  ]);
+
+  // Execute all the basic environments
+  for (const [name, url] of envs)
+    await T({ name, url });
+
+  // Just execute each environment as a baseline
+  await T(simulator, cached);
+  await T(simulator, cached, nointeractive);
+  await T(simulator, cached, noadtech);
+  await T(simulator, cached, noexternal);
+  await T(simulator, cached, noexternal, nocss);
+  await T(simulator, cached, noexternal, nocss, nojs);
+};
+
 const main = async (...rawArgs) => {
   const cmds = {
-    lighthouse: runLighthouse,
-    analyze,
-    makeca,
-    proxychrome: (opts) => proxychrome({ idle: true, ...opts }),
-  };
+    lighthouse, analyze, makeca, standardTests, proxychrome };
 
   const opts = minimist(rawArgs);
   const [cmd, ...pos] = opts._;
-  await cmds[cmd || 'lighthouse'](...pos, opts);
+  await cmds[cmd || 'standardTests'](...pos, opts);
 };
 
 const init = async () => {

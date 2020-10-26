@@ -2,6 +2,7 @@
   "dependencies": {
     "@adobe/helix-cli": "^13.0.3",
     "chrome-remote-interface": "^0.28.2",
+    "eslint": "^7.12.0",
     "fast-glob": "^3.2.4",
     "ferrum": "^1.7.0",
     "hoxy": "^3.3.1",
@@ -10,6 +11,7 @@
     "lighthouse": "https://github.com/koraa/lighthouse.git",
     "minimist": "^1.2.5",
     "shelljs": "^0.8.4",
-    "uuid": "^8.3.1"
+    "uuid": "^8.3.1",
+    "yaml": "^1.10.0"
   }
 }
