@@ -410,7 +410,7 @@ const lighthouse = async (...args) => {
         logLevel: 'error',
         output: 'html',
         onlyCategories: ['performance'],
-        port: proxychrome.chrome.port
+        port: proxychrome.chrome.port,
       });
 
       const dir = `${out}/${host}/${String(idx).padStart(6, '0')}`;
@@ -520,13 +520,15 @@ const standardTests = async (opts) => {
     proxychrome = await Proxychrome.create(
       {headless: true, helixStd: true, ...proxychrome});
 
-  let ctr = 0;
+  let ctr = -1;
   const T = async (...mods) => {
     const opts_ = is_any(mods[mods.length - 1], [Object]) ? mods.pop() : {};
     const opts = pipe(opts_, ...mods);
     let {
       name: basename, url, rules = [], cacheEnabled = false, ...rest
     } = opts;
+
+    ctr+=1;
 
     const name = [
       ...(isdef(basename) ? [basename] : []),
