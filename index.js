@@ -399,7 +399,7 @@ const lighthouse = async (...args) => {
 
   if (type(proxychrome) === String)
     proxychrome = yaml.parse(proxychrome);
-  if (isPlainObject()(proxychrome) === Object)
+  if (isPlainObject(proxychrome))
     proxychrome = await Proxychrome.create(
       {headless: true, ...proxychrome});
 
