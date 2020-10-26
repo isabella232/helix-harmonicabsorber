@@ -34,6 +34,7 @@ const procTime = new Date();
 const procTimeStr = procTime.toISOString().replace(/:/g, "-")
 const tmpdir = `${os.tmpdir()}/harmonicabsorber-${procTimeStr}-${procId}`
 
+const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const backupProps = (o, props) => obj(map(props, k => [k, o[k]]));
 const is_any = (v, ts) => contains(ts, is(type(v)));
 const assignDefaults = (o, pairs) => {
@@ -109,6 +110,7 @@ const helixCliUp = async (name, repo, branch, commit, ...args) => {
     'hlx', 'up', '--no-open', '--log-level=warn',
     ...(isdef(port) ? ['--port', port]: []),
   ];
+  await sleep(2);
   return npx(...commandLine, ...args, { cwd, ...opts, });
 }
 
