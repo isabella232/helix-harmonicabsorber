@@ -193,16 +193,16 @@ class Proxychrome extends AsyncCls {
         ...helix,
         {
           name: 'pages',
-          repo: 'https://github.com/adobe/pages',
+          repo: 'https://github.com/davidnuescheler/pages',
           branch: 'master',
-          commit: 'fb689eebd031b581915d4010c96150ba3fdcaba4',
+          commit: '39771bf64df3c1999533cf3f63be683acdd014a6',
           port: 27666
         },
         {
           name: 'david-pages',
-          branch: 'karo/david-nomartech',
-          repo: 'https://github.com/koraa/pages',
-          commit: '2fa29c4',
+          branch: 'master',
+          repo: 'https://github.com/davidnuescheler/pages',
+          commit: 'd7530a37b62a1e29987b8c1c6f30cc870ca7b02f',
           port: 12914
         },
       ];
