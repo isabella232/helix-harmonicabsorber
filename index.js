@@ -538,7 +538,7 @@ const standardTests = async (opts) => {
     const backup = backupProps(proxychrome, ['rules', 'cacheEnabled']);
     try {
       assign(proxychrome, {
-        rules: [...rules, proxychrome.rules],
+        rules: [...rules, ...proxychrome.rules],
         cacheEnabled,
       });
       await lighthouse(url, {
