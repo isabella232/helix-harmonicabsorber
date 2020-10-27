@@ -641,6 +641,13 @@ const report = async (dir, outdir) => {
 
     W(`\n#### Historgram\n`);
 
+    W(`\n#### Variance Ranking\n`)
+
+    // plot(name, `${title} graph`,
+    //   `set style fill solid`
+    //   map(experiments, ([title, ana]) => ({
+    //     title, type: 'line', val: valueGetter(title, ana).variance })));
+
     W(`\n#### Numeric\n`);
 
     each(experiments, ([title, ana]) => {
