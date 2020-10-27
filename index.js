@@ -16,13 +16,13 @@ const { abs } = Math;
 const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
 const { rmdirSync, createReadStream, createWriteStream } = fs;
-const { mkdir, readFile } = fs.promises;
+const { mkdir, readFile, open } = fs.promises;
 const { v4: uuidgen } = require('uuid');
 const { corrcoeff, spearmancoeff, mean, median, variance, stdev, meansqerr, skewness } = jstat;
 const {
-  isdef, map, exec, type, range, curry, setdefault, filter, each, identity,
-  mapSort, list, pipe, contains, is, keys, shallowclone, obj, dict,
-  chunkify,
+  isdef, map, exec, type, range, curry, setdefault, filter, each,
+  identity, mapSort, list, pipe, contains, is, keys, shallowclone,
+  obj, dict, chunkify, values first, uniq,
 } = require("ferrum");
 const {isPlainObject} = require('lodash');
 
@@ -418,6 +418,7 @@ const lighthouse = async (...args) => {
         ...(urls.length > 1 ? [host] : []),
         String(idx).padStart(6, '0')
       ].join('/');
+
       await writeFile(`${dir}/report.json`, JSON.stringify(lhr));
       await writeFile(`${dir}/artifacts.json`, JSON.stringify(artifacts));
       await writeFile(`${dir}/report.html`, report);
@@ -458,8 +459,6 @@ const analyze = async (dir) => {
     range: jstat.range(dat),
     mean: mean(dat),
     median: median(dat),
-
-    meansqerr: meansqerr(dat),
     variance: variance(dat),
     stdev: stdev(dat),
     skewness: skewness(dat),
@@ -474,42 +473,7 @@ const analyze = async (dir) => {
       assign(dat.score, characterizeData(dat.score.val));
   });
 
-  const characterizeCorrelation = (dat, dat2) => ({
-    rho: corrcoeff(dat, dat2),
-    spearman_rho: spearmancoeff(dat, dat2),
-  });
-
-  // Analyze correlation
-  each(metrics, ([_, met]) => {
-    if (isdef((met.raw || {}).val))
-      assign(met.raw, characterizeCorrelation(met.raw.val, perf.val));
-    if (isdef((met.score || {}).val))
-      assign(met.score, characterizeCorrelation(met.score.val, perf.val));
-  });
-
-  // Rank values
-  const ranks = {};
-  const mkrank = (name, type, val, norm = identity) => {
-    ranks[name] = pipe(
-      metrics,
-      map(([name, meta]) => [name, (meta[type] || {})[val]]),
-      filter(([_, v]) => isdef(v) && Number.isFinite(v)),
-      mapSort(([_, score]) => -norm(score)),
-    );
-  };
-
-  mkrank('rho',                'raw',   'rho',          abs);
-  mkrank('spearman_rho',       'raw',   'spearman_rho', abs);
-  mkrank('score_rho',          'score', 'rho',          abs);
-  mkrank('score_spearman_rho', 'score', 'spearman_rho', abs);
-
-  mkrank('mean',      'score', 'mean');
-  mkrank('median',    'score', 'median');
-  mkrank('meansqerr', 'score', 'meansqerr');
-  mkrank('stdev',     'score', 'stdev');
-  mkrank('skewness',  'score', 'skewness');
-
-  console.log(JSON.stringify({ perf, metrics, ranks }));
+  return { perf, metrics, ranks };
 };
 
 const standardTests = async (opts) => {
@@ -605,13 +569,114 @@ const standardTests = async (opts) => {
   await T(simulator, cached, noexternal, nocss, nojs);
 };
 
+const gnuplot = async (basename, datasets) => {
+  const data = pipe(
+    datasets,
+    enumerate,
+    map(([idx, keys]) => ({ ...obj(keys), idx })),
+    list,);
+
+  const buf = [];
+  const W = (...args) => each(args, v => buf.push(v));
+
+  // Output data
+  each(data, ({idx}) => {
+    W(`$_${idx} <<EOF`);
+    each(vals, v => W(`${v}\n`));
+    W(`EOF`);
+  });
+  W(`set terminal svg\n`);
+  W(`plot`);
+  each(data, ({ idx, title, type }) => {
+    W(` $_${idx} with ${type} title ${JSON.stringify(title)}, `);
+  });
+  await writeFile(`${basename}.gnuplot`, buf.join(''));
+
+  // Run Gnuplot
+  await exe('gnuplot', `${basename}.gnuplot`, {
+    stdio: ['inherit', open(`${basename}.svg`, 'w'), 'inherit']
+  }).pExit;
+
+  // Convert to png
+  await exe(
+    'convert',
+      '-density', '300',
+      `${basename}.svg`, `${basename}.png`).onExit;
+};
+
+const report = async (dir, outdir) => {
+  const experiments = pipe(
+    await pipe(
+      // List dirs which contain at least one */report.json
+      await glob('"*/*/report.json"', { cwd: dir }),
+      map(f => f.split('/')[0]),
+      uniq,
+      // Parse name & analyze dir
+      map(async d => {
+        const [_, _no, name] = d.match(/^(.*?)-(.*)$/);
+        return [name, await analyze(d)]
+      }),
+      Promise.all),
+    // Sort name by number
+    mapSort(first),
+    dict);
+
+  const forks = [];
+  const fork = (...args) => each(args, v => forks.push(v));
+
+  const buf = [];
+  const W = (...args) => each(args, v => buf.push(v));
+
+  const plot = (name, alt, vals) => {
+    fork(gnuplot(`${outdir}/${name}.png`, vals));
+    W(`![${alt}](./${name}.png)\n`);
+  };
+
+  const compareScore = (title, name, valueGetter) => {
+    W(`\n### ${title} Overall\n\n`);
+
+    plot(name, `${title} graph`,
+      map(experiments, ([title, ana]) => ({
+        title, type: 'line', val: valueGetter(title, ana).val })));
+
+    W(`\n#### Historgram\n`);
+
+    W(`\n#### Numeric\n`);
+
+    each(experiments, ([title, ana]) => {
+      const { val, ...rest } = valueGetter(title, ana);
+      W(`\n##### ${title}\n\n`);
+      W('```yaml\n', yaml.stringify(rest), '```\n');
+    });
+  };
+
+  W(`# Report\n`);
+
+  compareScore(`performance_score`, `Performance Score`, (_, ana) => ana.perf);
+
+  const metrics = uniq(map(experiments, ([k, _]) => k));
+  each(metrics, metric =>
+    compareScore(metric, metric, (_, ana) =>
+      ana.metrics[metric].score));
+
+  await Promise.all(forks);
+};
+
+
 const main = async (...rawArgs) => {
   const cmds = {
-    lighthouse, analyze, makeca, standardTests, proxychrome };
+    lighthouse, analyze, makeca, standardTests, proxychrome,
+    report,
+  };
 
   const opts = minimist(rawArgs);
   const [cmd, ...pos] = opts._;
-  await cmds[cmd || 'standardTests'](...pos, opts);
+  const r = await cmds[cmd || 'standardTests'](...pos, opts);
+
+  if (type(r) === String)
+    console.log(r);
+  else if (isdef(r))
+    console.log(JSON.stringify(r));
 };
 
 const init = async () => {
