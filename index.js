@@ -413,7 +413,11 @@ const lighthouse = async (...args) => {
         port: proxychrome.chrome.port,
       });
 
-      const dir = `${out}/${host}/${String(idx).padStart(6, '0')}`;
+      const dir = [
+        out,
+        ...(urls.length > 1 ? [host] : []),
+        String(idx).padStart(6, '0')
+      ].join('/');
       await writeFile(`${dir}/report.json`, JSON.stringify(lhr));
       await writeFile(`${dir}/artifacts.json`, JSON.stringify(artifacts));
       await writeFile(`${dir}/report.html`, report);
