@@ -560,10 +560,10 @@ const standardTests = async (opts) => {
     { match: /::1|127.0.0.1|localhost/, block: true, inverse: true },
   ]);
   const nocss = (opts) => addRules(opts, [
-    { match: /\.css([?#])/, block: true },
+    { match: /\.css([?#])$/, block: true },
   ]);
   const nojs = (opts) => addRules(opts, [
-    { match: /\.js([?#])/, block: true },
+    { match: /\.js([?#])$/, block: true },
   ]);
 
   // Execute all the basic environments
