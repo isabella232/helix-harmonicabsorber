@@ -22,7 +22,7 @@ const { corrcoeff, spearmancoeff, mean, median, variance, stdev, meansqerr, skew
 const {
   isdef, map, exec, type, range, curry, setdefault, filter, each,
   identity, mapSort, list, pipe, contains, is, keys, shallowclone,
-  obj, dict, chunkify, values first, uniq,
+  obj, dict, chunkify, values, first, uniq, enumerate, flat,
 } = require("ferrum");
 const {isPlainObject} = require('lodash');
 
@@ -35,6 +35,12 @@ const procTime = new Date();
 const procTimeStr = procTime.toISOString().replace(/:/g, "-")
 const tmpdir = `${os.tmpdir()}/harmonicabsorber-${procTimeStr}-${procId}`
 
+const debug = (...args) => console.error(...args);
+const debug_seq = (...args) => {
+  const x = list(args.pop());
+  debug("!!", ...args, x);
+  return x;
+};
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const backupProps = (o, props) => obj(map(props, k => [k, o[k]]));
 const is_any = (v, ts) => contains(ts, is(type(v)));
@@ -283,7 +289,7 @@ class Proxychrome extends AsyncCls {
       // URL Rewriting
       const dest = `${req.method} ${req.fullUrl()}`;
       if (dest === req.key) continue;
-      console.debug(`FORWARD ${req.key} -> ${dest}`);
+      debug(`FORWARD ${req.key} -> ${dest}`);
       req.key = dest;
       return this._interceptReq(req, resp, cycle)
     }
@@ -296,7 +302,7 @@ class Proxychrome extends AsyncCls {
 
     // Handle blocking
     if (req.block) {
-      console.debug("BLOCKING", req.key);
+      debug("BLOCKING", req.key);
       resp.statusCode = 404;
       return;
     }
@@ -304,21 +310,21 @@ class Proxychrome extends AsyncCls {
     // Handle static hosting
     if (isdef(req.hosting) && !isdef(req.hostedFile)) {
       req.hostedFile = `${req.hosting}/${new URL(req.fullUrl()).pathname}`;
-      console.debug("STATIC HOSTING", req.key, "in", req.hostedFile);
+      debug("STATIC HOSTING", req.key, "in", req.hostedFile);
     }
 
     // Handle Caching
     if (req.cacheEnabled && !isdef(req.hostedFile)) {
       const cached = this.cacheIndex[req.key];
       if (cached) {
-        //console.debug("CACHE HIT", req.key, cached);
+        //debug("CACHE HIT", req.key, cached);
         resp.statusCode = cached.statusCode;
         each(cached.headers || {}, ([k, v]) => {
           resp.headers[k] = v;
         });
         req.hostedFile = `${this.cachedir}/${cached.index}`;
       } else {
-        console.debug("CACHE MISS", req.key);
+        debug("CACHE MISS", req.key);
       }
     }
 
@@ -353,7 +359,7 @@ class Proxychrome extends AsyncCls {
       statusCode: resp.statusCode,
       index: this.fileCtr++,
     };
-    //console.debug("CREATE CACHE ENTRY ", req.key, cached);
+    //debug("CREATE CACHE ENTRY ", req.key, cached);
     this.cacheIndex[req.key] = cached;
     resp.tee(createWriteStream(`${this.cachedir}/${cached.index}`));
   }
@@ -453,16 +459,20 @@ const analyze = async (dir) => {
     });
   }));
 
-  const characterizeData = (dat) => ({
-    min: jstat.min(dat),
-    max: jstat.max(dat),
-    range: jstat.range(dat),
-    mean: mean(dat),
-    median: median(dat),
-    variance: variance(dat),
-    stdev: stdev(dat),
-    skewness: skewness(dat),
-  });
+  const characterizeData = (dat) => {
+    dat = list(map(dat, d => d || 0));
+    return {
+      val: dat,
+      min: jstat.min(dat),
+      max: jstat.max(dat),
+      range: jstat.range(dat),
+      mean: mean(dat),
+      median: median(dat),
+      variance: variance(dat),
+      stdev: stdev(dat),
+      skewness: skewness(dat),
+    };
+  };
 
   // Analyze statistical distributions of data collected
   assign(perf, characterizeData(perf.val));
@@ -473,7 +483,7 @@ const analyze = async (dir) => {
       assign(dat.score, characterizeData(dat.score.val));
   });
 
-  return { perf, metrics, ranks };
+  return { perf, metrics };
 };
 
 const standardTests = async (opts) => {
@@ -504,7 +514,7 @@ const standardTests = async (opts) => {
       ...map(mods, ({name}) => name),
     ].join('+').replace(/_/g, '+');
 
-    console.debug("RUN LIGHTHOUSE ", name, {rules, cacheEnabled, url, ...rest });
+    debug("RUN LIGHTHOUSE ", name, {rules, cacheEnabled, url, ...rest });
 
     const backup = backupProps(proxychrome, ['rules', 'cacheEnabled']);
     try {
@@ -569,54 +579,64 @@ const standardTests = async (opts) => {
   await T(simulator, cached, noexternal, nocss, nojs);
 };
 
-const gnuplot = async (basename, datasets) => {
+const gnuplot = async (basename, ...terms) => {
   const data = pipe(
-    datasets,
+    terms.pop(),
     enumerate,
     map(([idx, keys]) => ({ ...obj(keys), idx })),
-    list,);
+    list);
 
   const buf = [];
   const W = (...args) => each(args, v => buf.push(v));
 
   // Output data
-  each(data, ({idx}) => {
-    W(`$_${idx} <<EOF`);
-    each(vals, v => W(`${v}\n`));
-    W(`EOF`);
+  each(data, ({idx, val}) => {
+    W(`$_${idx} <<EOF\n`);
+    each(val || [], v =>
+      W(type(v) === Array ? v.join(' ') : v, '\n'));
+    W(`EOF\n`);
   });
+  W(`set key outside below\n`);
   W(`set terminal svg\n`);
+  each(terms, t => W(t, `\n`));
   W(`plot`);
-  each(data, ({ idx, title, type }) => {
-    W(` $_${idx} with ${type} title ${JSON.stringify(title)}, `);
+  each(data, ({ idx, title, using, type }) => {
+    W(` $_${idx} `);
+    if (isdef(using))
+      W(`using ${using} `);
+    W(`with ${type} `);
+    if (isdef(title))
+      W(`title ${JSON.stringify(title)}`);
+    W(`,`);
   });
   await writeFile(`${basename}.gnuplot`, buf.join(''));
 
   // Run Gnuplot
   await exe('gnuplot', `${basename}.gnuplot`, {
-    stdio: ['inherit', open(`${basename}.svg`, 'w'), 'inherit']
+    stdio: ['inherit', await open(`${basename}.svg`, 'w'), 'inherit']
   }).pExit;
 
   // Convert to png
   await exe(
     'convert',
-      '-density', '300',
+      '-density', '150',
       `${basename}.svg`, `${basename}.png`).onExit;
 };
 
 const report = async (dir, outdir) => {
+  await mkdir(outdir, { recursive: true });
+
   const experiments = pipe(
-    await pipe(
+    await Promise.all(pipe(
       // List dirs which contain at least one */report.json
-      await glob('"*/*/report.json"', { cwd: dir }),
+      await glob('*/*/report.json', { cwd: dir }),
       map(f => f.split('/')[0]),
       uniq,
       // Parse name & analyze dir
       map(async d => {
         const [_, _no, name] = d.match(/^(.*?)-(.*)$/);
-        return [name, await analyze(d)]
-      }),
-      Promise.all),
+        return [name, await analyze(`${dir}/${d}`)]
+      }))),
     // Sort name by number
     mapSort(first),
     dict);
@@ -627,26 +647,51 @@ const report = async (dir, outdir) => {
   const buf = [];
   const W = (...args) => each(args, v => buf.push(v));
 
-  const plot = (name, alt, vals) => {
-    fork(gnuplot(`${outdir}/${name}.png`, vals));
+  const plot = (name, alt, ...rest) => {
+    fork(gnuplot(`${outdir}/${name}`, ...rest));
     W(`![${alt}](./${name}.png)\n`);
   };
 
-  const compareScore = (title, name, valueGetter) => {
-    W(`\n### ${title} Overall\n\n`);
+  const combos = [
+    ['empty', 'simulator', 'online', 'simulator+statified'],
+    ['simulator', 'simulator+david', 'pages', 'pages+david'],
+    ['simulator+statified', 'simulator+statified+david'],
+    ['simulator', 'simulator+cached'],
+    ['simulator+cached', 'simulator+cached+nointeractive', 'simulator+cached+noexternal'],
+    ['simulator+cached+noexternal', 'simulator+cached+noexternal+nocss', 'simulator+cached+noexternal+nocss+nojs'],
+  ];
 
-    plot(name, `${title} graph`,
-      map(experiments, ([title, ana]) => ({
-        title, type: 'line', val: valueGetter(title, ana).val })));
+  const compareScore = (name, title, valueGetter) => {
+    W(`\n### ${title} Ranking\n`)
 
-    W(`\n#### Historgram\n`);
+    plot(`${name}__ranking`, `${title} graph`,
+      `set style fill solid`,
+      `set boxwidth 0.5`,
+      `set logscale y`,
+      `set xtics rotate by 60 right`,
+      [{
+        type: 'boxes',
+        title: 'variance ranking',
+        using: '2:xtic(1)',
+        val: map(experiments, ([title, ana]) => [
+          title,
+          valueGetter(title, ana).variance,
+        ])
+      }]);
 
-    W(`\n#### Variance Ranking\n`)
+    W(`\n### ${title} Raw Values\n\n`);
 
-    // plot(name, `${title} graph`,
-    //   `set style fill solid`
-    //   map(experiments, ([title, ana]) => ({
-    //     title, type: 'line', val: valueGetter(title, ana).variance })));
+    each(combos, combo => {
+      plot([name, ...combo].join('_'), `${title}`,
+        map(combo, (title) => {
+          const tity = experiments.get(title);
+          return {
+            title,
+            type: 'line',
+            val: valueGetter(title, tity).val
+          };
+      }));
+    });
 
     W(`\n#### Numeric\n`);
 
@@ -659,13 +704,31 @@ const report = async (dir, outdir) => {
 
   W(`# Report\n`);
 
-  compareScore(`performance_score`, `Performance Score`, (_, ana) => ana.perf);
+  compareScore(`performance_score`, `Performance Score`, (title, ana) => {
+    return ana.perf;
+  });
 
-  const metrics = uniq(map(experiments, ([k, _]) => k));
-  each(metrics, metric =>
-    compareScore(metric, metric, (_, ana) =>
-      ana.metrics[metric].score));
+  // const metrics = pipe(
+  //   experiments,
+  //   map(([_, ex]) => keys(ex.metrics)),
+  //   flat,
+  //   uniq,
+  // );
+  //
+  // each(metrics, metric => {
+  //   compareScore(metric, metric, (_, ana) =>
+  //     ((ana.metrics[metric] || {}).score || { val: [] }));
+  // });
 
+  W(`
+<style>
+  img {
+    max-width: 80%;
+  }
+</style>
+  `);
+
+  fork(writeFile(`${outdir}/report.md`, buf.join('')));
   await Promise.all(forks);
 };
 
@@ -678,18 +741,22 @@ const main = async (...rawArgs) => {
 
   const opts = minimist(rawArgs);
   const [cmd, ...pos] = opts._;
-  const r = await cmds[cmd || 'standardTests'](...pos, opts);
 
-  if (type(r) === String)
-    console.log(r);
-  else if (isdef(r))
-    console.log(JSON.stringify(r));
+  let r = await cmds[cmd || 'standardTests'](...pos, opts);
+  if (isdef(r) && type(r) !== String)
+    r = JSON.stringify(r);
+  if (isdef(r)) {
+    // *sigh* console.log doesn't handle writes > 2^16-1 properly
+    for (let off=0; off < r.length; off += 4096)
+      process.stdout.write(r.slice(off, off+4096));
+    process.stdout.write('\n');
+  }
 };
 
 const init = async () => {
   try {
-    process.on('uncaughtException', (err, origin) => console.warn(err, origin));
-    process.on('unhandeledRejecion', (err) => console.warn(err));
+    process.on('uncaughtException', (err, origin) => debug(err, origin));
+    process.on('unhandeledRejecion', (err) => debug(err));
     exitHandlers.push(() => rmdirSync(tmpdir, { recursive: true }));
     process.on('exit', () => each(exitHandlers, exec));
     await main(...process.argv.slice(2));
