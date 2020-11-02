@@ -303,7 +303,8 @@ class Proxychrome extends AsyncCls {
     // Handle blocking
     if (req.block) {
       debug("BLOCKING", req.key);
-      resp.statusCode = 404;
+      resp.statusCode = 200;
+      resp.content = "";
       return;
     }
 
@@ -562,19 +563,16 @@ const standardTests = async (opts) => {
     { match: /\/hlx_fonts\//, block: true },
   ]);
   const nosvg = (opts) => addRules(opts, [
-    { match: /\.css([?#])?$/, block: true },
-  ]);
-  const nocreativecloudsvg = (opts) => addRules(opts, [
-    { match: /\/creativecloud\.css([?#])?$/, block: true },
+    { match: /\.svg([?#].*)?$/, block: true },
   ]);
   const noimg = (opts) => addRules(opts, [
-    { match: /\.(png|jpg|jpeg)([?#])?$/, block: true },
+    { match: /\.(png|jpg|jpeg)([?#].*)?$/, block: true },
   ]);
   const nocss = (opts) => addRules(opts, [
-    { match: /\.css([?#])?$/, block: true },
+    { match: /\.css([?#].*)?$/, block: true },
   ]);
   const nojs = (opts) => addRules(opts, [
-    { match: /\.js([?#])?$/, block: true },
+    { match: /\.js([?#].*)?$/, block: true },
   ]);
 
   // Execute all the basic environments
@@ -587,7 +585,6 @@ const standardTests = async (opts) => {
   await T(pages, cached, noadtech);
   await T(pages, cached, noexternal);
   await T(pages, cached, noexternal, nofonts);
-  await T(pages, cached, noexternal, nocreativecloudsvg);
   await T(pages, cached, noexternal, nosvg);
   await T(pages, cached, noexternal, noimg);
   await T(pages, cached, noexternal, nocss);
@@ -691,8 +688,8 @@ const report = async (dir, outdir) => {
   const combos = [
     ['empty',        'pages', 'pages+cached'],
     ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
-    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts', 'pages+cached+noexternal+nosvg'],
-    ['pages+cached+noexternal', 'pages+cached+noexternal+noimg', 'pages+cached+noexternal+nocss'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts',  'pages+cached+noexternal+nocss'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nosvg', 'pages+cached+noexternal+noimg',],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nojs'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss'],
