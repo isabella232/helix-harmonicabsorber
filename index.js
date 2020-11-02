@@ -192,30 +192,30 @@ class Proxychrome extends AsyncCls {
     } = opts;
 
     // Provide helix env
-    if (helixStd) {
-      rules = [
-        ...rules,
-        { match: 'localhost:10768/', hostname: 'pages.proxy-virtual' },
-        { match: 'localhost:24030/', hostname: 'david-pages.proxy-virtual' },
-      ];
-      helix = [
-        ...helix,
-        {
-          name: 'pages',
-          repo: 'https://github.com/davidnuescheler/pages',
-          branch: 'master',
-          commit: '39771bf64df3c1999533cf3f63be683acdd014a6',
-          port: 27666
-        },
-        {
-          name: 'david-pages',
-          branch: 'master',
-          repo: 'https://github.com/davidnuescheler/pages',
-          commit: 'd7530a37b62a1e29987b8c1c6f30cc870ca7b02f',
-          port: 12914
-        },
-      ];
-    }
+    // if (helixStd) {
+    //   rules = [
+    //     ...rules,
+    //     { match: 'localhost:10768/', hostname: 'pages.proxy-virtual' },
+    //     { match: 'localhost:24030/', hostname: 'david-pages.proxy-virtual' },
+    //   ];
+    //   helix = [
+    //     ...helix,
+    //     {
+    //       name: 'pages',
+    //       repo: 'https://github.com/davidnuescheler/pages',
+    //       branch: 'master',
+    //       commit: '39771bf64df3c1999533cf3f63be683acdd014a6',
+    //       port: 27666
+    //     },
+    //     {
+    //       name: 'david-pages',
+    //       branch: 'master',
+    //       repo: 'https://github.com/davidnuescheler/pages',
+    //       commit: 'd7530a37b62a1e29987b8c1c6f30cc870ca7b02f',
+    //       port: 12914
+    //     },
+    //   ];
+    // }
 
     // Parse Rules
     rules = pipe(
