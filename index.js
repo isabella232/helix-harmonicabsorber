@@ -12,7 +12,7 @@ const child_process = require('child_process');
 const chrome_remote = require('chrome-remote-interface');
 const yaml = require('yaml');
 
-const { abs } = Math;
+const { abs, min, max } = Math;
 const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
 const { rmdirSync, createReadStream, createWriteStream } = fs;
@@ -22,7 +22,7 @@ const { corrcoeff, spearmancoeff, mean, median, variance, stdev, meansqerr, skew
 const {
   isdef, map, exec, type, range, curry, setdefault, filter, each,
   identity, mapSort, list, pipe, contains, is, keys, shallowclone,
-  obj, dict, chunkify, values, first, uniq, enumerate, flat,
+  obj, dict, chunkify, values, first, uniq, enumerate, flat, get,
 } = require("ferrum");
 const {isPlainObject} = require('lodash');
 
@@ -468,7 +468,6 @@ const analyze = async (dir) => {
       range: jstat.range(dat),
       mean: mean(dat),
       median: median(dat),
-      variance: variance(dat),
       stdev: stdev(dat),
       skewness: skewness(dat),
     };
@@ -559,11 +558,20 @@ const standardTests = async (opts) => {
   const noexternal = (opts) => addRules(opts, [
     { match: /pages--adobe.hlx.page/, block: true, inverse: true },
   ]);
+  const nofonts = (opts) => addRules(opts, [
+    { match: /\/hlx_fonts\//, block: true },
+  ]);
+  const nosvg = (opts) => addRules(opts, [
+    { match: /\.css([?#])?$/, block: true },
+  ]);
+  const noimg = (opts) => addRules(opts, [
+    { match: /\.(png|jpg|jpeg)([?#])?$/, block: true },
+  ]);
   const nocss = (opts) => addRules(opts, [
-    { match: /\.css([?#])$/, block: true },
+    { match: /\.css([?#])?$/, block: true },
   ]);
   const nojs = (opts) => addRules(opts, [
-    { match: /\.js([?#])$/, block: true },
+    { match: /\.js([?#])?$/, block: true },
   ]);
 
   // Execute all the basic environments
@@ -575,19 +583,33 @@ const standardTests = async (opts) => {
   await T(pages, cached, nointeractive);
   await T(pages, cached, noadtech);
   await T(pages, cached, noexternal);
+  await T(pages, cached, noexternal, nofonts);
+  await T(pages, cached, noexternal, nosvg);
+  await T(pages, cached, noexternal, noimg);
   await T(pages, cached, noexternal, nocss);
-  await T(pages, cached, noexternal, nocss, nojs);
+  await T(pages, cached, noexternal, nojs);
+  await T(pages, cached, noexternal, nofonts, nosvg, noimg);
+  await T(pages, cached, noexternal, nofonts, nosvg, noimg, nocss);
+  await T(pages, cached, noexternal, nofonts, nosvg, noimg, nocss, nojs);
 };
 
 const gnuplot = async (basename, ...terms) => {
   const data = pipe(
     terms.pop(),
     enumerate,
-    map(([idx, keys]) => ({ ...obj(keys), idx })),
+    map(([idx, keys]) => {
+      const o = obj(keys);
+      return { ...o, idx, val: list(o.val) };
+    }),
     list);
 
   const buf = [];
   const W = (...args) => each(args, v => buf.push(v));
+
+  const all_values = list(flat(map(data, get('val'))));
+  let ymin = jstat.min(all_values);
+  let ymax = jstat.max(all_values);
+  let yrange = ymax - ymin;
 
   // Output data
   each(data, ({idx, val}) => {
@@ -598,6 +620,7 @@ const gnuplot = async (basename, ...terms) => {
   });
   W(`set key outside below\n`);
   W(`set terminal svg\n`);
+  W(`set yrange [${ymin-yrange*0.02}:${ymax+yrange*0.02}]\n`);
   each(terms, t => W(t, `\n`));
   W(`plot`);
   each(data, ({ idx, title, using, type }) => {
@@ -664,30 +687,15 @@ const report = async (dir, outdir) => {
   const combos = [
     ['empty',        'pages', 'pages+cached'],
     ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
-    ['empty',        'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
-    ['pages+cached+noexternal', 'pages+cached+noexternal+nocss', 'pages+cached+noexternal+nocss+nojs'],
-    ['empty',                   'pages+cached+noexternal+nocss', 'pages+cached+noexternal+nocss+nojs'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts', 'pages+cached+noexternal+nosvg'];
+    ['pages+cached+noexternal', 'pages+cached+noexternal+noimg', 'pages+cached+noexternal+nocss'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss+nojs'],
   ];
 
   const compareScore = (name, title, valueGetter) => {
-    W(`\n### ${title} Ranking\n`)
-
-    plot(`${name}__ranking`, `${title} graph`,
-      `set style fill solid`,
-      `set boxwidth 0.5`,
-      `set logscale y`,
-      `set xtics rotate by 60 right`,
-      [{
-        type: 'boxes',
-        title: 'variance ranking',
-        using: '2:xtic(1)',
-        val: map(experiments, ([title, ana]) => [
-          title,
-          valueGetter(title, ana).variance,
-        ])
-      }]);
-
-    W(`\n### ${title} Raw Values\n\n`);
+    W(`\n### ${title} Scores\n\n`);
 
     each(combos, combo => {
       plot([name, ...combo].join('_'), `${title}`,

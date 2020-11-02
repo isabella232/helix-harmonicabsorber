@@ -11,6 +11,7 @@
     "lighthouse": "https://github.com/koraa/lighthouse.git",
     "lodash": "^4.17.20",
     "minimist": "^1.2.5",
+    "science": "^1.9.3",
     "shelljs": "^0.8.4",
     "uuid": "^8.3.1",
     "yaml": "^1.10.0"
