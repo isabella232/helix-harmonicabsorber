@@ -687,7 +687,7 @@ const report = async (dir, outdir) => {
   const combos = [
     ['empty',        'pages', 'pages+cached'],
     ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
-    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts', 'pages+cached+noexternal+nosvg'];
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts', 'pages+cached+noexternal+nosvg'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+noimg', 'pages+cached+noexternal+nocss'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss'],
