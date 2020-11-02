@@ -564,6 +564,9 @@ const standardTests = async (opts) => {
   const nosvg = (opts) => addRules(opts, [
     { match: /\.css([?#])?$/, block: true },
   ]);
+  const nocreativecloudsvg = (opts) => addRules(opts, [
+    { match: /\/creativecloud\.css([?#])?$/, block: true },
+  ]);
   const noimg = (opts) => addRules(opts, [
     { match: /\.(png|jpg|jpeg)([?#])?$/, block: true },
   ]);
@@ -584,6 +587,7 @@ const standardTests = async (opts) => {
   await T(pages, cached, noadtech);
   await T(pages, cached, noexternal);
   await T(pages, cached, noexternal, nofonts);
+  await T(pages, cached, noexternal, nocreativecloudsvg);
   await T(pages, cached, noexternal, nosvg);
   await T(pages, cached, noexternal, noimg);
   await T(pages, cached, noexternal, nocss);
@@ -689,6 +693,7 @@ const report = async (dir, outdir) => {
     ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts', 'pages+cached+noexternal+nosvg'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+noimg', 'pages+cached+noexternal+nocss'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nojs'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss+nojs'],
