@@ -534,13 +534,13 @@ const standardTests = async (opts) => {
   // Envs
   const envs = dict(chunkify(2)([
     'empty', 'http://baseline.proxy-virtual/empty.html',
-    'simulator', 'http://localhost:27666/creativecloud/en/ete/how-adobe-apps-work-together/',
+    // 'simulator', 'http://localhost:27666/creativecloud/en/ete/how-adobe-apps-work-together/',
     'pages', 'https://pages--adobe.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/',
-    'online', 'https://pages.adobe.com/illustrator/en/tl/thr-illustration-home/',
-    'simulator_statified', 'http://localhost:10768/illustrator/en/tl/thr-illustration-home/index.html',
-    'simulator_david', 'http://localhost:12914/creativecloud/en/ete/how-adobe-apps-work-together/',
-    'pages_david', 'https://pages--davidnuescheler.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/',
-    'simulator_statified_david', 'http://localhost:24030/illustrator/en/tl/thr-illustration-home/index.html',
+    // 'online', 'https://pages.adobe.com/illustrator/en/tl/thr-illustration-home/',
+    // 'simulator_statified', 'http://localhost:10768/illustrator/en/tl/thr-illustration-home/index.html',
+    // 'simulator_david', 'http://localhost:12914/creativecloud/en/ete/how-adobe-apps-work-together/',
+    // 'pages_david', 'https://pages--davidnuescheler.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/',
+    // 'simulator_statified_david', 'http://localhost:24030/illustrator/en/tl/thr-illustration-home/index.html',
   ]));
 
   // Mods
@@ -548,7 +548,7 @@ const standardTests = async (opts) => {
     ...opts,
     rules: [...newRules, ...rules,],
   });
-  const simulator = (opts) => ({ url: envs.get('simulator'), ...opts});
+  const pages = (opts) => ({ url: envs.get('pages'), ...opts});
   const cached = (opts) => ({ cacheEnabled: true, ...opts });
   const nointeractive = (opts) => addRules(opts, [
     { match: /stats.adobe.com|facebook.com|facebook.net/, block: true },
@@ -571,12 +571,12 @@ const standardTests = async (opts) => {
     await T({ name, url });
 
   // Just execute each environment as a baseline
-  await T(simulator, cached);
-  await T(simulator, cached, nointeractive);
-  await T(simulator, cached, noadtech);
-  await T(simulator, cached, noexternal);
-  await T(simulator, cached, noexternal, nocss);
-  await T(simulator, cached, noexternal, nocss, nojs);
+  await T(pages, cached);
+  await T(pages, cached, nointeractive);
+  await T(pages, cached, noadtech);
+  await T(pages, cached, noexternal);
+  await T(pages, cached, noexternal, nocss);
+  await T(pages, cached, noexternal, nocss, nojs);
 };
 
 const gnuplot = async (basename, ...terms) => {
@@ -652,13 +652,19 @@ const report = async (dir, outdir) => {
     W(`![${alt}](./${name}.png)\n`);
   };
 
+  // const combos = [
+  //   ['empty', 'simulator', 'online', 'simulator+statified'],
+  //   ['simulator', 'simulator+david', 'pages', 'pages+david'],
+  //   ['simulator+statified', 'simulator+statified+david'],
+  //   ['simulator', 'simulator+cached'],
+  //   ['simulator+cached', 'simulator+cached+nointeractive', 'simulator+cached+noexternal'],
+  //   ['simulator+cached+noexternal', 'simulator+cached+noexternal+nocss', 'simulator+cached+noexternal+nocss+nojs'],
+  // ];
+
   const combos = [
-    ['empty', 'simulator', 'online', 'simulator+statified'],
-    ['simulator', 'simulator+david', 'pages', 'pages+david'],
-    ['simulator+statified', 'simulator+statified+david'],
-    ['simulator', 'simulator+cached'],
-    ['simulator+cached', 'simulator+cached+nointeractive', 'simulator+cached+noexternal'],
-    ['simulator+cached+noexternal', 'simulator+cached+noexternal+nocss', 'simulator+cached+noexternal+nocss+nojs'],
+    ['empty', 'pages', 'pages+cached'],
+    ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
+    ['pages+cached+noexternal', 'pages+cached+noexternal+nocss', 'pages+cached+noexternal+nocss+nojs'],
   ];
 
   const compareScore = (name, title, valueGetter) => {
