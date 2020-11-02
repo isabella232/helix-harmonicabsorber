@@ -557,7 +557,7 @@ const standardTests = async (opts) => {
     { match: /adobe-privacy\/latest\/privacy.min|marketingtech|demdex.net|cookielaw.org|geolocation.onetrust.com/, block: true },
   ]);
   const noexternal = (opts) => addRules(opts, [
-    { match: /::1|127.0.0.1|localhost/, block: true, inverse: true },
+    { match: /pages--adobe.hlx.page/, block: true, inverse: true },
   ]);
   const nocss = (opts) => addRules(opts, [
     { match: /\.css([?#])$/, block: true },
@@ -662,9 +662,11 @@ const report = async (dir, outdir) => {
   // ];
 
   const combos = [
-    ['empty', 'pages', 'pages+cached'],
+    ['empty',        'pages', 'pages+cached'],
     ['pages+cached', 'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
+    ['empty',        'pages+cached+nointeractive', 'pages+cached+noadtech', 'pages+cached+noexternal'],
     ['pages+cached+noexternal', 'pages+cached+noexternal+nocss', 'pages+cached+noexternal+nocss+nojs'],
+    ['empty',                   'pages+cached+noexternal+nocss', 'pages+cached+noexternal+nocss+nojs'],
   ];
 
   const compareScore = (name, title, valueGetter) => {
