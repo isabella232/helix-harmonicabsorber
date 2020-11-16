@@ -11,8 +11,9 @@ const hoxy = require('hoxy');
 const child_process = require('child_process');
 const chrome_remote = require('chrome-remote-interface');
 const yaml = require('yaml');
+const marked = require('marked');
 
-const { abs, min, max } = Math;
+const { abs, min, max, round, ceil, floor } = Math;
 const { assign } = Object;
 const { resolve, dirname, basename } = require('path');
 const { rmdirSync, createReadStream, createWriteStream } = fs;
@@ -22,9 +23,10 @@ const { corrcoeff, spearmancoeff, mean, median, variance, stdev, meansqerr, skew
 const {
   isdef, map, exec, type, range, curry, setdefault, filter, each,
   identity, mapSort, list, pipe, contains, is, keys, shallowclone,
-  obj, dict, chunkify, values, first, uniq, enumerate, flat, get,
+  obj, dict, chunkify, values, first, uniq, enumerate, flat, get, concat, second, empty,
+  chunkifyShort, next, range0, iter, foldl, sum, plus, mul, prepend, append,
 } = require("ferrum");
-const {isPlainObject} = require('lodash');
+const {isPlainObject, camelCase} = require('lodash');
 
 /// CONFIG
 
@@ -35,6 +37,13 @@ const procTime = new Date();
 const procTimeStr = procTime.toISOString().replace(/:/g, "-")
 const tmpdir = `${os.tmpdir()}/harmonicabsorber-${procTimeStr}-${procId}`
 
+const seqrange = (seq) => {
+  const it = iter(seq), v0 = next(it);
+  const [a, z] = foldl(it, [v0, v0],
+    ([a, z], v) => [min(a, v), max(z, v)]);
+  return [a, z, z-a];
+};
+const clamp = (v, a, z) => max(a, min(v, z));
 const debug = (...args) => console.error(...args);
 const debug_seq = (...args) => {
   const x = list(args.pop());
@@ -43,12 +52,40 @@ const debug_seq = (...args) => {
 };
 const sleep = (ms) => new Promise(res => setTimeout(res, ms));
 const backupProps = (o, props) => obj(map(props, k => [k, o[k]]));
+const is_a = (v, t) => type(v) === t;
 const is_any = (v, ts) => contains(ts, is(type(v)));
 const assignDefaults = (o, pairs) => {
   each(pairs, ([k, v]) => {
     if (k in o) return;
     o[k] = v;
   });
+};
+
+/// Like a promise, but has resolve/reject methods
+/// and a connect method that can resolve/reject from
+/// another promise or barrier.
+class Barrier extends Promise {
+  constructor(fn) {
+    let props;
+    super((_res, _rej) => {
+      props = { _res, _rej };
+      if (isdef(fn))
+        fn(_res, _rej);
+    });
+    assign(this, props);
+  }
+
+  resolve(v) {
+    this._res(v);
+  }
+
+  reject(e) {
+    this._rej(e);
+  }
+
+  connect(p) {
+    p.then(this._res).catch(this._rej);
+  }
 };
 
 const throws = (fn) => {
@@ -73,7 +110,7 @@ const isAccessible = async (path) => {
 }
 
 /// Run the subcommand
-const exe = async (cmd, ...args /* , opts = {} */) => {
+const exe = (cmd, ...args /* , opts = {} */) => {
   const opts = type(args[args.length - 1]) === Object ? args.pop() : {};
   const proc = child_process.spawn(cmd, args, {
     stdio: ['inherit', 'inherit', 'inherit'],
@@ -178,6 +215,38 @@ class AsyncCls {
   _init() {}
   _exit() {}
 }
+
+const perc90 = (data) => {
+  const discardNo = floor(data.length/20);
+  const sorted = mapSort(list(data), identity);
+  each(range0(discardNo), _ => {
+    sorted.pop();
+    sorted.shift();
+  });
+  return sorted;
+};
+
+const millis = n => round(n*1000);
+
+const histogram = (data) => {
+  if (!isdef(data) || empty(data))
+    return [new Map(), 0];
+
+  data =list(data);
+
+  // 90th percentile sample + scotts rule
+  const p90 = perc90(data);
+  let binWidth = stdev(p90) * 3.49 * p90.length**(-1/3);
+  if (binWidth === 0) binWidth = 0.1;
+
+  const r = new Map();
+  each(data || [], v => {
+    const k = round(v/binWidth)*binWidth;
+    r.set(k, (r.get(k) || 0) + 1);
+  });
+
+  return [r, binWidth];
+};
 
 class Proxychrome extends AsyncCls {
   async _init(opts) {
@@ -594,57 +663,237 @@ const standardTests = async (opts) => {
   await T(pages, cached, noexternal, nofonts, nosvg, noimg, nocss, nojs);
 };
 
-const gnuplot = async (basename, ...terms) => {
-  const data = pipe(
-    terms.pop(),
-    enumerate,
-    map(([idx, keys]) => {
-      const o = obj(keys);
-      return { ...o, idx, val: list(o.val) };
-    }),
-    list);
+class TextFile {
+  constructor(file, _opts = {}) {
+    assign(this, { file, buf: [] });
+  }
 
-  const buf = [];
-  const W = (...args) => each(args, v => buf.push(v));
+  write_seq(seq) {
+    each(seq, v => this.buf.push(v));
+    return this;
+  }
 
-  const all_values = list(flat(map(data, get('val'))));
-  let ymin = jstat.min(all_values);
-  let ymax = jstat.max(all_values);
-  let yrange = ymax - ymin;
+  write(...toks) {
+    return this.write_seq(toks);
+  }
 
-  // Output data
-  each(data, ({idx, val}) => {
-    W(`$_${idx} <<EOF\n`);
-    each(val || [], v =>
-      W(type(v) === Array ? v.join(' ') : v, '\n'));
-    W(`EOF\n`);
-  });
-  W(`set key outside below\n`);
-  W(`set terminal svg\n`);
-  W(`set yrange [${ymin-yrange*0.02}:${ymax+yrange*0.02}]\n`);
-  each(terms, t => W(t, `\n`));
-  W(`plot`);
-  each(data, ({ idx, title, using, type }) => {
-    W(` $_${idx} `);
-    if (isdef(using))
-      W(`using ${using} `);
-    W(`with ${type} `);
-    if (isdef(title))
-      W(`title ${JSON.stringify(title)}`);
-    W(`,`);
-  });
-  await writeFile(`${basename}.gnuplot`, buf.join(''));
+  writeln(...toks) {
+    return this.write(...toks, '\n');
+  }
 
-  // Run Gnuplot
-  await exe('gnuplot', `${basename}.gnuplot`, {
-    stdio: ['inherit', await open(`${basename}.svg`, 'w'), 'inherit']
-  }).pExit;
+  write_list(seq, opts = {}) {
+    const { delim = '\n' } = opts;
+    each(seq, l => {
+      this.write(l)
+      this.write(delim)
+    });
+    return this;
+  }
 
-  // Convert to png
-  await exe(
-    'convert',
-      '-density', '150',
-      `${basename}.svg`, `${basename}.png`).onExit;
+  write_table(seq, opts = {}) {
+    const { delim = '\n', col_sep = ' ' } = opts;
+    each(seq, col => {
+      this.write_with_sep(col, col_sep);
+      this.write(delim);
+    });
+    return this;
+  }
+
+  write_with_sep(seq, sep) {
+    each(enumerate(seq), ([idx, v]) => {
+      if (idx !== 0)
+        this.buf.push(sep);
+      this.buf.push(v);
+    });
+    return this;
+  }
+
+  end() {
+    return writeFile(this.file, this.buf.join(''));
+  }
+}
+
+class Gnuplot {
+  constructor(opts = {}) {
+    const {
+      datasets = [],
+      instructions = [],
+      plotOpts = [],
+    } = opts;
+    assign(this, { datasets, instructions, plotOpts, });
+  }
+
+  data(seq, name, opts) {
+    opts = isdef(opts) ? opts : [];
+    name = isdef(name) ? name : this.datasets.length;
+    this.datasets.push({
+      type: 'list',
+      data: list(seq),
+      name,
+      plotOpts: list(opts),
+    });
+    return this;
+  }
+
+  ident(name) {
+    name = camelCase(String(name));
+    if (name.match(/^[0-9]/))
+      name = `_${name}`;
+    return name;
+  }
+
+  table(seq, name, opts) {
+    opts = isdef(opts) ? opts : [];
+    name = isdef(name) ? name : `_${this.datasets.length}`;
+    this.datasets.push({
+      type: 'table',
+      data: list(map(seq, list)),
+      name,
+      plotOpts: list(opts),
+    });
+    return this;
+  }
+
+  instruct(...instruction) {
+    this.instructions.push(instruction.join(' '));
+    return this;
+  }
+
+  popt(opts) {
+    each(opts, o => this.opts.push(o));
+    this.plotOpts.push(list(opts));
+    return this;
+  }
+
+  all_values() {
+    return flat(map(this.datasets, d =>
+        d.type === 'list' ? d.data : map(d.data, second)));
+  }
+
+  ymin(...args) {
+    return jstat.min(list(this.all_values(...args)));
+  }
+
+  ymax(...args) {
+    return jstat.max(list(this.all_values(...args)));
+  }
+
+  yrange(...args) {
+    return this.ymin(...args) - this.ymax(...args);
+  }
+
+  normalizeYrange(opts = {}) {
+    let {
+      a = this.ymin(),
+      z = this.ymax(),
+      minOff = 1e-3,
+      off = max((z - a) * 0.02, minOff),
+    } = opts;
+    return this.instruct(`set yrange [${a-off}:${z+off}]`)
+  }
+
+  async plot(file, instruction = null) {
+    const w = new TextFile(`${file}.gnuplot`);
+
+    each(this.datasets, ({ name, type, data }) => {
+      w.writeln(`$_${this.ident(name)} <<EOF`);
+      if (type === 'list')
+        w.write_list(data);
+      else
+        w.write_table(data);
+      w.writeln(`EOF`);
+    });
+
+    w.writeln(`set key outside below`);
+    w.writeln(`set terminal pngcairo`);
+    w.writeln(`set output ${JSON.stringify(`${file}.png`)}`);
+    w.write_list(this.instructions);
+
+    if (isdef(instruction)) {
+      w.writeln(instruction);
+    } else {
+      w.write(`plot `);
+      each(this.datasets, ({ name, plotOpts }) => {
+        w.write(`$_${this.ident(name)} title ${JSON.stringify(name)} `);
+        each(concat(this.plotOpts, plotOpts), opt => {
+          if (is_a(opt, String))
+            w.write(opt, ' ');
+          else
+            each(opt, o => w.write(o, ' '));
+        });
+        w.write(`,`);
+      });
+    }
+
+    await w.end();
+
+    // Run Gnuplot
+    if (empty(list(this.all_values()))) {
+      debug(`Skipping empty GNUPLOT:${file}.gnuplot`)
+    } else {
+      await type(this).exec(`${file}.gnuplot`);
+    }
+  }
+
+  static initShed() {
+    if (!isdef(this.queue)) {
+      assign(this, {
+        queue: [],
+        procno: 0,
+        maxProcs: 8,
+        batchSz: 10,
+        minBatchSz: 5,
+        maxBatchSz: 40,
+      });
+    }
+  }
+
+  static exec(filename) {
+    this.initShed();
+    const r = new Barrier();
+    this.queue.push([filename, r]);
+    this.sched();
+    return r;
+  }
+
+  static sched() {
+    this.initShed();
+    if (this.procno >= this.maxProcs)
+      return;
+
+    try {
+      while (!empty(this.queue) && this.procno <= this.maxProcs)
+        this.fork(this.queue.splice(0, this.batchSz));
+
+      let growth = 1;
+      if (this.procno < this.maxProcs) // Short on jobs
+        growth = 0.7;
+      else if (!empty(this.queue))
+        growth = 1.3;
+
+      this.batchSz = clamp(round(this.batchSz * growth),
+        this.minBatchSz, this.maxBatchSz);
+    } catch (_) {
+      // pass
+    }
+  }
+
+  static async fork(pairs) {
+    if (empty(pairs))
+      return;
+
+    try {
+      this.procno += 1;
+      await exe('gnuplot', ...map(pairs, first)).onExit;
+    } catch (_) {}
+
+    try {
+      each(pairs, ([_, barrier]) => barrier.resolve());
+    } catch (_) {}
+
+    this.procno -= 1;
+    this.sched();
+  }
 };
 
 const report = async (dir, outdir) => {
@@ -665,16 +914,15 @@ const report = async (dir, outdir) => {
     mapSort(first),
     dict);
 
+  const metrics = pipe(
+    experiments,
+    map(([_, ex]) => keys(ex.metrics)),
+    flat,
+    uniq,
+  );
+
   const forks = [];
   const fork = (...args) => each(args, v => forks.push(v));
-
-  const buf = [];
-  const W = (...args) => each(args, v => buf.push(v));
-
-  const plot = (name, alt, ...rest) => {
-    fork(gnuplot(`${outdir}/${name}`, ...rest));
-    W(`![${alt}](./${name}.png)\n`);
-  };
 
   // const combos = [
   //   ['empty', 'simulator', 'online', 'simulator+statified'],
@@ -696,57 +944,212 @@ const report = async (dir, outdir) => {
     ['pages+cached+noexternal', 'pages+cached+noexternal+nofonts+nosvg+noimg+nocss+nojs'],
   ];
 
-  const compareScore = (name, title, valueGetter) => {
-    W(`\n### ${title} Scores\n\n`);
+  class ReportFile extends TextFile {
+    constructor(...args) {
+      super(...args);
+    }
 
-    each(combos, combo => {
-      plot([name, ...combo].join('_'), `${title}`,
-        map(combo, (title) => {
-          const tity = experiments.get(title);
-          return {
-            title,
-            type: 'line',
-            val: valueGetter(title, tity).val
-          };
-      }));
-    });
+    dir() {
+      return dirname(this.file);
+    }
 
-    W(`\n#### Numeric\n`);
+    plot(name, alt, gnuplotBuilder, ...args) {
+      fork(gnuplotBuilder.plot(`${this.dir()}/${name}`, ...args));
+      this.writeln(`![${alt}](./${name}.png)  `)
+    }
 
-    each(experiments, ([title, ana]) => {
-      const { val, ...rest } = valueGetter(title, ana);
-      W(`\n##### ${title}\n\n`);
-      W('```yaml\n', yaml.stringify(rest), '```\n');
-    });
-  };
-
-  W(`# Report\n`);
-
-  compareScore(`performance_score`, `Performance Score`, (title, ana) => {
-    return ana.perf;
-  });
-
-  // const metrics = pipe(
-  //   experiments,
-  //   map(([_, ex]) => keys(ex.metrics)),
-  //   flat,
-  //   uniq,
-  // );
-  //
-  // each(metrics, metric => {
-  //   compareScore(metric, metric, (_, ana) =>
-  //     ((ana.metrics[metric] || {}).score || { val: [] }));
-  // });
-
-  W(`
+    end() {
+      this.writeln(`
 <style>
   img {
     max-width: 80%;
   }
 </style>
-  `);
+      `);
 
-  fork(writeFile(`${outdir}/report.md`, buf.join('')));
+      const s = this.buf.join('');
+      fork(writeFile(
+        this.file.replace(/readme\.md$/, 'index.html'),
+        marked(s)));
+
+      this.buf = [s];
+      fork(super.end());
+    }
+  };
+
+  const reportSingleMetric = (name, dir, scoreAna, rawAna) => {
+    let r = new ReportFile(`${dir}/readme.md`);
+
+    r.writeln(`# Report ${name}\n`);
+    r.writeln(`[parent..](./..)  \n`);
+
+    r.writeln(`\n## Scores\n`)
+    r.plot("score", "score",
+      new Gnuplot()
+        .data(scoreAna.val || [], name, { with: 'line' })
+        .normalizeYrange());
+
+    r.writeln(`\n## Score Histogram\n`)
+    let [hist, histWidth] = histogram(scoreAna.val || [])
+    r.plot("hist", "hist",
+      new Gnuplot()
+        .table(hist, name, { with: 'boxes' })
+        .normalizeYrange({ a: 0, off: 0 })
+        .instruct(`set boxwidth ${histWidth}`)
+        .instruct(`set style fill transparent solid 0.5 noborder`));
+
+    r.writeln(`\n## Score Indicators\n`)
+    {
+      const { val, ...rest } = scoreAna;
+      r.writeln('```yaml');
+      r.writeln(yaml.stringify(rest));
+      r.writeln('```');
+    }
+
+    r.writeln(`\n## Raw Values\n`);
+
+    r.plot("raw", "raw",
+      new Gnuplot()
+        .data(rawAna.val || [], `raw ${name}`, { with: 'line' })
+        .normalizeYrange());
+
+    r.writeln(`\n## Raw Values Histogram\n`);
+    ([hist, histWidth] = histogram(rawAna.val));
+    r.plot("raw_hist", "raw hist",
+      new Gnuplot()
+        .table(hist, name, { with: 'boxes' })
+        .normalizeYrange({ a: 0, off: 0 })
+        .instruct(`set boxwidth ${histWidth}`)
+        .instruct(`set style fill transparent solid 0.5 noborder`));
+
+    r.writeln(`\n## Raw Indicators\n`)
+
+    {
+      const { val, ...rest } = rawAna;
+      r.writeln('```yaml');
+      r.writeln(yaml.stringify(rest));
+      r.writeln('```');
+    }
+
+    r.end();
+  };
+
+  const reportMetricGroup = (name, getScoreAnalysis, getRawAnalysis) => {
+    let r = new ReportFile(`${outdir}/${name}/readme.md`);
+
+    r.writeln(`# Report ${name}\n`);
+
+    r.writeln(`[parent..](./..)  \n`);
+    each(experiments, ([title, _]) =>
+      r.writeln(`[${title}](./${title}/)  `));
+
+    // Display comparisons
+
+    r.writeln('\n## Comparison\n');
+
+    each(combos, combo => {
+      const plotName = [name, ...combo].join('_');
+      const plot = new Gnuplot();
+      const hist = new Gnuplot();
+      let hw = 1;
+      each(combo, title => {
+        const analysis = getScoreAnalysis(experiments.get(title));
+        const values = (analysis || {}).val || [];
+        plot.data(values, title, { with: 'line' });
+        let h = histogram(values);
+        hist.table(h[0], title, { with: 'boxes' });
+        hw = min(hw, h[1]);
+      });
+      plot.normalizeYrange();
+      const histAllX = pipe(
+        map(hist.datasets, ({data}) => data),
+        flat,
+        map(first),
+        list,
+      );
+      hist.instruct(`set boxwidth ${max(hw, jstat.range(histAllX)/50)}`);
+      hist.instruct(`set style fill transparent solid 0.5 noborder`);
+      hist.normalizeYrange({ a: 0, off: 0 });
+      r.plot(plotName, plotName, plot);
+      r.plot(plotName + "+hist", plotName + " Histogram", hist);
+    });
+
+    // Report on each component
+
+    each(experiments, ([title, experiment]) => {
+      reportSingleMetric(title, `${outdir}/${name}/${title}/`,
+        getScoreAnalysis(experiment) || {},
+        getRawAnalysis(experiment) || {});
+    });
+
+    r.end();
+  };
+
+  const reportExperiment = (name, dir, ex) => {
+    let r = new ReportFile(`${dir}/readme.md`);
+
+    r.writeln(`# Report ${name}\n`);
+
+    r.writeln(`[parent..](./..)  \n`);
+
+    const plots = pipe(
+      ex.metrics,
+      map(([name, struct]) => [name, (struct.score || {})]),
+      filter(([_, v]) => !empty((v || {}).val || [])),
+      mapSort(([_, v]) => stdev(perc90(v.val))),
+      append(['overall score', ex.perf]),
+      enumerate,
+      map(([idx, [name, {val, min, range, ...rest}]]) => ({
+        idx, name, val, min, range, ...rest,
+        normalizedVal: list(map(val || [],
+          v => (v-min)*0.7/(range||1)+idx+0.2)),
+      })),
+      list
+    );
+
+    const plot = new Gnuplot();
+    plot.instruct(`unset label`);
+    each(plots, ({idx, name, stdev, range, min, max, normalizedVal}) => {
+      const label = `${name}, stdev=${millis(stdev)}, range=${millis(range)}[${millis(min)}; ${millis(max)}]`;
+      const labelX = 1;
+      const labelY = idx+1;
+      plot.data(normalizedVal, name, { with: 'line' });
+      plot.instruct(`set label ${JSON.stringify(label)} at ${labelX},${labelY} left front`)
+    });
+    plot.instruct(`set yrange [0:${plots.length}+0.2]`)
+    plot.instruct(`set terminal pngcairo size 640, ${plots.length*480*0.25}`);
+    plot.instruct(`unset key`);
+    r.plot("jitter_comparison", "jitter comparison", plot);
+
+    r.end();
+  };
+
+  let r = new ReportFile(`${outdir}/readme.md`);
+
+  r.writeln(`# Report\n`);
+
+  r.writeln(`[Peformance Score](./performance_score/)  \n`);
+  reportMetricGroup(`performance_score`,
+    (ana => ana.perf),
+    (_   => ({})));
+
+  each(metrics, metric => {
+    r.writeln(`[${metric}](./${metric}/)  `);
+    reportMetricGroup(metric,
+      (ana => (ana.metrics[metric] || {}).score),
+      (ana => (ana.metrics[metric] || {}).raw))
+  });
+
+  r.writeln(`\n# Experiments\n`);
+
+  each(experiments, ([title, ex]) => {
+    const dir = `./exp-${title}/`;
+    r.writeln(`[${title}](${dir})  `);
+    reportExperiment(title, `${outdir}/${dir}`, ex);
+  });
+
+  r.end();
+
   await Promise.all(forks);
 };
 
