@@ -61,6 +61,17 @@ const assignDefaults = (o, pairs) => {
   });
 };
 
+/// (mean(higher_p50) - mean(lower_p50)) / stddev
+const eccentricity = (data) => {
+  const s = mapSort(data, identity);
+  const l = floor(s.length / 2);
+  const v = mean(s.slice(-l)) - mean(s.slice(0, l))
+  return v / stdev(s);
+};
+
+/// (mean(population) / mean(p90))**2
+const outlandishness = (dat) => (mean(dat) / mean(percdev(dat, 0.9)))**2;
+
 /// Like a promise, but has resolve/reject methods
 /// and a connect method that can resolve/reject from
 /// another promise or barrier.
@@ -216,14 +227,12 @@ class AsyncCls {
   _exit() {}
 }
 
-const perc90 = (data) => {
-  const discardNo = floor(data.length/20);
-  const sorted = mapSort(list(data), identity);
-  each(range0(discardNo), _ => {
-    sorted.pop();
-    sorted.shift();
-  });
-  return sorted;
+// Discard the (1-p)% values with the greatest deviation
+// from the mean
+const percdev = (data, p) => {
+  const no = round(data.length * (1-p));
+  const m = mean(data);
+  return mapSort(data, v => -abs(v-m)).slice(no);
 };
 
 const millis = n => round(n*1000);
@@ -235,7 +244,7 @@ const histogram = (data) => {
   data =list(data);
 
   // 90th percentile sample + scotts rule
-  const p90 = perc90(data);
+  const p90 = percdev(data, 0.9);
   let binWidth = stdev(p90) * 3.49 * p90.length**(-1/3);
   if (binWidth === 0) binWidth = 0.1;
 
@@ -531,6 +540,7 @@ const analyze = async (dir) => {
 
   const characterizeData = (dat) => {
     dat = list(map(dat, d => d || 0));
+    const p90 = percdev(dat, 0.9);
     return {
       val: dat,
       min: jstat.min(dat),
@@ -540,6 +550,15 @@ const analyze = async (dir) => {
       median: median(dat),
       stdev: stdev(dat),
       skewness: skewness(dat),
+      eccentricity: eccentricity(dat),
+      quanta: uniq(dat).size,
+      quantaRatio: uniq(dat).size / dat.length,
+      p90range: jstat.range(p90),
+      p90stdev: median(p90),
+      p90eccentricity: eccentricity(dat),
+      p90quanta: uniq(p90).size,
+      p90quantaRatio: uniq(p90).size / p90.length,
+      outlandishness: outlandishness(dat),
     };
   };
 
@@ -1043,9 +1062,69 @@ const report = async (dir, outdir) => {
     each(experiments, ([title, _]) =>
       r.writeln(`[${title}](./${title}/)  `));
 
+    r.writeln('\n## Indicator Progression\n');
+
+    const indiCombos = [
+      ["score:mean", "score:median"],
+      ["mean", "median"],
+      ["min", "max"],
+      ["range", "p90range"],
+      ["stddev", "p90stddev", "skewness"],
+      ["eccentricity", "p90eccentricity"],
+      ["quanta", "p90quanta"],
+      ["quantaRatio", "p90quantaRatio"],
+      ["outlandishness"],
+    ];
+
+    const progression = [
+      'pages',
+      'pages+cached',
+      'pages+cached+noadtech',
+      'pages+cached+noexternal',
+      // 'pages+cached+noexternal+nofonts',
+      // 'pages+cached+noexternal+svg',
+      // 'pages+cached+noexternal+noimg',
+      // 'pages+cached+noexternal+nocss',
+      'pages+cached+noexternal+nofonts+nosvg+noimg',
+      'pages+cached+noexternal+nofonts+nosvg+noimg+nocss',
+      'pages+cached+noexternal+nofonts+nosvg+noimg+nocss+nojs'
+    ];
+
+    each(enumerate(progression), ([idx, name]) => {
+      r.writeln(`${idx+1}. ${name}\n`);
+    });
+    r.writeln(`\n`);
+
+    const indicators = pipe(
+      indiCombos,
+      flat,
+      uniq,
+      map(n => [n, []]),
+      obj);
+
+    each(progression, (expName) => {
+      const exp = experiments.get(expName);
+      const raw = getRawAnalysis(exp) || {};
+      const score = getScoreAnalysis(exp) || {};
+      const ana = { score, raw };
+
+      each(indicators, ([indi, vals]) => {
+        const [src, name] = indi.match(/:/) ? indi.split(':') : ['raw', indi];
+        vals.push(ana[src][name]);
+      });
+    });
+
+    each(indiCombos, (combo) => {
+      const plot = new Gnuplot();
+      each(combo, indi =>
+        plot.data(indicators[indi], indi, { with: 'line' }));
+      plot.normalizeYrange();
+      r.plot(["progession", ...combo].join('_'), '', plot);
+    });
+
     // Display comparisons
 
-    r.writeln('\n## Comparison\n');
+    r.writeln('\n## Raw Comparison\n');
 
     each(combos, combo => {
       const plotName = [name, ...combo].join('_');
@@ -1053,7 +1132,7 @@ const report = async (dir, outdir) => {
       const hist = new Gnuplot();
       let hw = 1;
       each(combo, title => {
-        const analysis = getScoreAnalysis(experiments.get(title));
+        const analysis = getRawAnalysis(experiments.get(title));
         const values = (analysis || {}).val || [];
         plot.data(values, title, { with: 'line' });
         let h = histogram(values);
@@ -1096,7 +1175,7 @@ const report = async (dir, outdir) => {
       ex.metrics,
       map(([name, struct]) => [name, (struct.score || {})]),
       filter(([_, v]) => !empty((v || {}).val || [])),
-      mapSort(([_, v]) => stdev(perc90(v.val))),
+      mapSort(([_, v]) => stdev(percdev(v.val, 0.9))),
       append(['overall score', ex.perf]),
       enumerate,
       map(([idx, [name, {val, min, range, ...rest}]]) => ({
@@ -1131,7 +1210,7 @@ const report = async (dir, outdir) => {
   r.writeln(`[Peformance Score](./performance_score/)  \n`);
   reportMetricGroup(`performance_score`,
     (ana => ana.perf),
-    (_   => ({})));
+    (ana => ana.perf));
 
   each(metrics, metric => {
     r.writeln(`[${metric}](./${metric}/)  `);
