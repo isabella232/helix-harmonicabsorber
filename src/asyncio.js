@@ -4,12 +4,15 @@ import fs from 'fs';
 import assert from 'assert';
 import process from 'process';
 import child_process from 'child_process';
+import { fileURLToPath } from 'url';
 import { resolve, dirname, basename } from 'path';
-import { typename, type, isdef, curry, map, } from 'ferrum';
-import { create } from './ferrumpp';
+import { typename, type, isdef, curry, map, concat } from 'ferrum';
+import { create } from './ferrumpp.js';
 
 const { assign } = Object;
 const { mkdir } = fs.promises;
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /// Base class for defining async classes.
 /// This disables the use of the constructor & implements the

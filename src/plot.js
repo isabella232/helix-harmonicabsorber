@@ -1,24 +1,29 @@
 import { readFile } from 'fs/promises';
-import { camelCase } from 'lodash';
+import lodash from 'lodash';
 import {
-  each, empty, map, first, enumerate, isdef, filter, pipe,
+  each, empty, map, first, enumerate, pipe,
+  dict, values, flat, reject, curry,
   multiline as M
 } from 'ferrum';
-import { NewFn, mapValue, is_a } from './ferrumpp';
-import { Barrier, spawn, writeFile } from './asyncio';
-import { Samples } from './statistics';
-import { clamp, maximum } from './math';
-import { catchall } from './stuff';
-import { Txt } from './txt';
+import { mapValue, is_a } from './ferrumpp.js';
+import { Barrier, spawn, writeFile } from './asyncio.js';
+import { Samples } from './statistics.js';
+import { clamp, maximum } from './math.js';
+import { catchall } from './stuff.js';
+import { Txt } from './txt.js';
 
 const { assign } = Object;
 const { round, max } = Math;
+const { camelCase } = lodash;
 
 // Scheduling ---------------------------
 
-class GnuplotSched extends NewFn {
+class GnuplotSched {
+  static new() {
+    return new GnuplotSched();
+  }
+
   constructor() {
-    super();
     assign(this, {
       queue: [],
       procno: 0,
@@ -30,7 +35,6 @@ class GnuplotSched extends NewFn {
   }
 
   enqueue(filename) {
-    this.initShed();
     const r = new Barrier();
     this.queue.push([filename, r]);
     this._tick();
@@ -64,7 +68,7 @@ class GnuplotSched extends NewFn {
 
     try {
       this.procno += 1;
-      await spawn('gnuplot', ...map(pairs, first)).onExit;
+      await spawn('gnuplot', ...map(pairs, first));
     } catch (_) {
       // pass
     }
@@ -76,7 +80,7 @@ class GnuplotSched extends NewFn {
     }
 
     this.procno -= 1;
-    this.sched();
+    this._tick();
   }
 }
 
@@ -87,12 +91,17 @@ export const plot2svg = async (basename, plot) => {
   const svg = `${basename}.svg`, src = `${basename}.gnuplot`;
   const { width = 640, height = 480, src: code} = plot;
 
-  await writeFile(src, M(`
-    set terminal svg size ${height}, ${width}
+  const preamble = M(`
+    reset
+    set terminal svg size ${width}, ${height}
     set output ${strlit(svg)}
+  `);
 
-    ${code}
-  `));
+  const closing = M(`
+    reset
+  `);
+
+  await writeFile(src, preamble + '\n\n' + code + '\n\n' + closing);
   await sched.enqueue(src);
 
   // Enable SVG anti aliasing
@@ -104,7 +113,7 @@ export const plot2svg = async (basename, plot) => {
 // Plot generators ----------------------------
 
 const ident = (n) => {
-  const m = camelCase(String(name));
+  const m = camelCase(String(n));
   return n.match(/^[0-9]/) ? `_${m}` : m;
 };
 
@@ -113,32 +122,21 @@ const doll = (n) => `$${ident(n)}`;
 const strlit = JSON.stringify;
 
 class Gnuplot extends Txt {
-  doll(n) {
-    return this.write(`$${ident(n)}`);
+  static new() {
+    return new Gnuplot();
   }
 
   datatable(n, d) {
     return this
       .writeln(`${doll(n)} <<EOF`)
-      .write_table(d)
+      .write_table(is_a(d, Samples) ? d.points() : d)
       .writeln(`EOF\n`);
 
   }
 
   datatables(seq) {
     each(seq, ([k, v]) => this.datatable(k, v));
-  }
-
-  datalist(n, d) {
-    return this.datatable(n, pipe(
-      is_a(d, Samples) ? d.data() : d,
-      enumerate,
-      filter(([_, v]) => isdef(v))
-    ));
-  }
-
-  datalists(seq) {
-    each(seq, ([k, v]) => this.datalist(k, v));
+    return this;
   }
 
   assemble(opts = {}) {
@@ -146,52 +144,68 @@ class Gnuplot extends Txt {
   }
 }
 
-const parsePlots = (plots) =>
-  dict(mapValue(plots, Samples.coerce));
+const parsePlots = (plots) => pipe(
+  mapValue(plots, Samples.coerce),
+  reject(([_, s]) => empty(s.data())),
+  dict);
 
 const parseMeta = (plots_) => {
   const plots = parsePlots(plots_);
   const meta = plots.size === 1
     ? first(values(plots))
-    : Samples.new(flat(mapValue(plots, v => v.data)));
+    : Samples.new(flat(map(plots, ([_, v]) => v.data())));
   return { plots, meta };
 }
 
 /// Compares one or many series of samples.
 /// Data points are linearly interpolated
-export const line = (plots_) => {
+export const lineWith = curry('lineWith', (plots_, opts) => {
+  const { style = 'line', keyopts = 'outside below' } = opts;
+
   const { plots, meta } = parseMeta(plots_);
+  if (empty(meta.data()))
+    return { src: "" };
+
   const off = max(meta.range() * 0.02, 1e-3);
-  const src = Gnuplot.new().datalists(plots);
+  const src = Gnuplot.new().datatables(plots);
 
   src.writeln(M(`
-
-    set key outside below
+    set key ${keyopts}
     set yrange [${meta.minimum()-off}:${meta.maximum()+off}]
 
   `));
 
   src.writeln(`plot \\`);
   each(plots, ([name, _]) =>
-    src.writeln(`  ${doll(name)} title ${strlit(name)} with line, \\`));
+    src.writeln(`  ${doll(name)} title ${strlit(name)} with ${style}, \\`));
 
-  return src.assemble();
-};
+  return src.assemble({
+    height: 480 + plots.size*10
+  });
+});
+
+/// Line plot with default options
+export const line = lineWith({});
 
 /// Generate a histogram from one are many data sets
 /// One bin size is chosen across all data sets.
-export const histogram = (plots_) => {
+export const histogramWith = curry('histogramWith', (plots_, opts) => {
+  const { style = 'boxes', keyopts = 'outside below' } = opts;
+
   const { plots, meta } = parseMeta(plots_);
+  if (empty(meta.data()))
+    return { src: "" };
+
+  const xmeta = meta.mirrorAxes();
   const binSz = meta.reccomendedBinSize();
-  const height = maximum(map(plots, p => p.data().length));
+  const height = maximum(map(plots, ([_, p]) => p.data().length));
   const src = Gnuplot.new();
   
-  src.datatables(mapValue(plots, ([n, p]) =>
-    [n, p.histogram(binSz)]));
+  src.datatables(mapValue(plots, (p) => p.histogram(binSz)));
 
   src.writeln(M(`
-
-    set key outside below
+    set key ${keyopts}
+    set boxwidth ${binSz}
     set yrange [0:${height}]
     set style fill transparent solid 0.5 noborder
 
@@ -199,10 +213,15 @@ export const histogram = (plots_) => {
 
   src.writeln(`plot \\`);
   each(plots, ([name, _]) =>
-    src.writeln(`  ${doll(name)} title ${strlit(name)} with boxes, \\`));
+    src.writeln(`  ${doll(name)} title ${strlit(name)} with ${style}, \\`));
 
-  return src.assemble();
-};
+  return src.assemble({
+    height: 480 + plots.size*10
+  });
+});
+
+/// Histogram with default opts
+export const histogram = histogramWith({});
 
 /// A correlation plot shows many measurement series below
 /// each other. Plots are scaled to occupy the full height
@@ -211,6 +230,9 @@ export const histogram = (plots_) => {
 /// the same.
 export const correlation = (plots_) => {
   const plots = parsePlots(plots_);
+  if (empty(plots))
+    return { src: "" };
+
   const src = Gnuplot.new();
 
   // This is not a real math graph, we are really using
@@ -228,15 +250,21 @@ export const correlation = (plots_) => {
   //
   // We are deactivating the tics, so the relative size used
   // here is of no great concern
-  src.datalists(map(enumerate(plots), ([i, [k, p]]) => {
-    const a = 1/p.range() * 0.7;
-    const b = -p.minimum() + i + 0.2;
-    return [k, map(p, x => a*x + b)];
+  src.datatables(map(enumerate(plots), ([i, [k, p]]) => {
+    const r = p.p90().range() !== 0
+      ? p.p90().range()
+      : p.range() !== 0
+        ? p.range()
+        : 0.1;
+    const a = 1/r * 0.7;
+    const b = i + 0.2;
+    const xoff = -p.minimum();
+    return [k, dict(mapValue(p.points(), x => a*(x+xoff) + b))];
   }));
 
   src.writeln(M(`
-
     unset key
+    unset tics
     set yrange [0:${plots.size + 0.2}]
 
   `));
@@ -245,7 +273,7 @@ export const correlation = (plots_) => {
   each(enumerate(plots), ([i, [k,  _]]) =>
     src.writeln(
       `set label ${strlit(k)} `,
-        `at character 0.8, first ${i} left front`));
+        `at character 4.2, first ${i+1} left front`));
 
   // Output plots
   src.writeln(`plot \\`);

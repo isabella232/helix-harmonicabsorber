@@ -1,17 +1,17 @@
 import lighthouse_lib_ from 'lighthouse';
 import { resolve } from 'path';
 import { range0, isdef, curry, enumerate, each } from 'ferrum';
-import { debug } from './stuff';
-import { Proxychrome, cacheRequest } from './proxychrome';
-import { procTimeStr } from './settings';
-import { writeFile } from './asyncio';
+import { debug } from './stuff.js';
+import { Proxychrome, cacheRequest } from './proxychrome.js';
+import { procTimeStr } from './settings.js';
+import { writeFile } from './asyncio.js';
 
 const { assign } = Object;
 
 const lighthouse_eval_ = async (opts) => {
-  let { proxychrome, out, url } = opts;
+  let { proxychrome, out, url, repeat = 100 } = opts;
 
-  for (const idx of range0(100)) {
+  for (const idx of range0(repeat)) {
     const { report, lhr, artifacts } = await lighthouse_lib_(url, {
       logLevel: 'error',
       output: 'html',
@@ -46,9 +46,10 @@ const lighthouse = async (opts, fn) => {
   }
 
   try {
-    a.push(fn);
-    return await lighthouse_eval_(rest);
+    a.push(f);
+    await lighthouse_eval_(rest);
   } finally {
+    // indexOf here is safe because we just created our very own f()
     a.splice(a.indexOf(f), 1);
   }
 };
@@ -95,7 +96,6 @@ const deriveExp = (name, base, intercept) => ({
   }
 });
 
-const expEmpty = { name: 'empty', url: emptyUrl };
 const expPages = { name: 'pages', url: pagesUrl };
 const expCached = deriveExp('cached', expPages, cache);
 const expNoexternal = deriveExp('noexternal', expCached, blockExternal);
@@ -109,15 +109,15 @@ const expNocss = deriveExp('nocss', expNomedia, blockSuffix('css'));
 const expNojs = deriveExp('nojs', expNocss, blockSuffix('js'));
 
 const experiments = [
-  expEmpty, expPages, expCached, expNoexternal,
+  expPages, expCached, expNoexternal,
   expNomedia, expNocss, expNojs
 ];
 
-export const runExperiment = async () => {
+export const gather = async () => {
   const dir = `harmonicabsorber_${procTimeStr}`;
   const proxychrome = await Proxychrome.new();
-  each(enumerate(experiments), ([idx, { name, ...rest }]) => {
+  for (const [idx, { name, ...rest }] of enumerate(experiments)) {
     const out = `${dir}/${String(idx).padStart(6, '0')}-${name}`;
-    lighthouse({ proxychrome, out, ...rest });
-  });
+    await lighthouse({ proxychrome, out, ...rest });
+  }
 };

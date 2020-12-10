@@ -4,7 +4,7 @@ import {
   obj, list, type, pairs,
   map, flat,
 } from 'ferrum';
-import { throws } from './ferrumpp';
+import { throws } from './ferrumpp.js';
 
 const { round } = Math;
 
@@ -33,6 +33,8 @@ export const linearizeJson = (v, _prefix = []) =>
 
 export const millis = n => round(n*1000);
 
+export const roundMillis = n => round(n*1000)/1000;
+
 export const base64 = (s) => Buffer.from(s).toString('base64');
 
 export const catchall = (f) => {
@@ -40,5 +42,13 @@ export const catchall = (f) => {
     return f();
   } catch (_) {
     // pass
+  }
+}
+
+export const asyncMaskErrors = async (msg, fn) => {
+  try {
+    return await fn();
+  } catch (e) {
+    console.warn(`[WARNING] ${msg}:`, e);
   }
 }

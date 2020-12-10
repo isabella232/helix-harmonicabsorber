@@ -9,18 +9,12 @@ import {
   cartesian2, enumerate, filter,
   setdefault,
 } from 'ferrum';
+
 const { assign } = Object;
 
 // Like assign, but curryable
-export assignProps = curry('assign', (targ, src) =>
+export const assignProps = curry('assign', (targ, src) =>
     assign(targ, src));
-
-/// Base class that implements the new function
-export class NewFn {
-  static new(...args) {
-    return new this(...args);
-  }
-}
 
 /// Type -> * -> Bool
 export const is_a = curry('is_a', (v, t) =>
@@ -67,12 +61,16 @@ export const foldl1 = curry('foldl1', (seq, fn) => {
 });
 
 /// Seq<A -> A -> A> -> Seq<A> -> List<A>
-export const parallel_foldl1 = (seq, fns) => {
+export const parallel_foldl1 = (seq, fns_) => {
+  const fns = list(enumerate(fns_));
   const [v, it] = popl(seq);
-  const state = pipe(repeat(v), take(v.length), list);
-  each(cartesian2(it, enumerate(fns)), (v, [idx, fn]) => {
-    state[idx] = fn(state[idx], v);
+  const state = pipe(repeat(v), take(fns.length), list);
+  each(it, (v) => {
+    each(fns, ([idx, fn]) => {
+      state[idx] = fn(state[idx], v);
+    });
   });
+  return state;
 };
 
 /// fn(Cont, Pairs) => Cont
@@ -126,3 +124,12 @@ export const throws = (fn) => {
     return true;
   }
 };
+
+/// Determine if a sequence is empty
+export const empty_seq = (seq) => {
+  for (const _ of iter(seq)) return false;
+  return true;
+}
+
+/// Empty function
+export const nop = () => {};

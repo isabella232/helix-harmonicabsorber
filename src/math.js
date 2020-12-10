@@ -1,12 +1,15 @@
-/// Mathematical functions. 
+/// Mathematical functions.
 
 import { curry, pipe } from 'ferrum';
-import { foldl1, parallel_foldl1, coerce_list } from './ferrumpp';
+import {
+  foldl1, parallel_foldl1, coerce_list, is_a
+} from './ferrumpp.js';
+
 const { floor } = Math;
 const { isInteger } = Number;
 
 /// * -> Bool
-export const isReal = (v) => isFinite(v) && !isInteger(v);
+export const isReal = (v) => is_a(v, Number) && isFinite(v);
 
 /// Number -> Number -> Number
 export const min2 =  curry('min2', Math.min);

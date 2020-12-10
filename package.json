@@ -4,6 +4,7 @@
     "@adobe/helix-cli": "^13.0.3",
     "chrome-remote-interface": "^0.28.2",
     "d3": "^6.2.0",
+    "eslint-plugin-import": "^2.22.1",
     "fast-glob": "^3.2.4",
     "ferrum": "^1.7.0",
     "hoxy": "^3.3.1",

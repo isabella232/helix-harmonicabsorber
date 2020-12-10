@@ -3,6 +3,10 @@ import { each, enumerate } from 'ferrum';
 const { assign } = Object;
 
 export class Txt {
+  static new() {
+    return new Txt();
+  }
+
   constructor() {
     assign(this, {  buf: [] });
   }
@@ -53,12 +57,16 @@ export class Txt {
 }
 
 export class Markdown extends Txt {
+  static new() {
+    return new Markdown();
+  }
+
   h1(txt) {
-    return this.writeln(`# ${txt}\n`);
+    return this.writeln(`\n# ${txt}\n`);
   }
 
   h2(txt) {
-    return this.writeln(`## ${txt}\n`);
+    return this.writeln(`\n## ${txt}\n`);
   }
 
   p(txt) {
@@ -66,10 +74,14 @@ export class Markdown extends Txt {
   }
 
   link(desc, href) {
-    return this.writeln(`[${desc}](${href})`);
+    return this.write(`[${desc}](${href})`);
   }
 
   img(alt, href) {
-    return this.writeln(`![${alt}](${href})`);
+    return this.write(`![${alt}](${href})`);
+  }
+
+  code(lang, c) {
+    return this.writeln('\n```', lang, '\n', c, '\n```\n');
   }
 }

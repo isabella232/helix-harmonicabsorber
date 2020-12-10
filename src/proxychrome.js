@@ -3,10 +3,10 @@ import hoxy from 'hoxy';
 import { createWriteStream } from 'fs';
 import { readFile } from 'fs/promises';
 import { each, concat } from 'ferrum';
-import { rapply } from './ferrumpp';
-import { AsyncCls, openReadStream, writeFile } from './asyncio';
-import { cakey, cacert, tmpdir } from './settings';
-import { base64, debug } from './stuff';
+import { rapply } from './ferrumpp.js';
+import { AsyncCls, openReadStream, writeFile } from './asyncio.js';
+import { cakey, cacert, tmpdir } from './settings.js';
+import { base64, debug } from './stuff.js';
 
 const { assign } = Object;
 
