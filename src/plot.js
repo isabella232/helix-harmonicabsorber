@@ -93,7 +93,7 @@ export const plot2svg = async (basename, plot) => {
 
   const preamble = M(`
     reset
-    set terminal svg size ${width}, ${height}
+    set terminal svg size ${width}, ${height} enhanced background rgb 'white'
     set output ${strlit(svg)}
   `);
 
