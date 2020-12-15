@@ -87,6 +87,9 @@ export const defaults = (to, from) => {
 export const filterKey = curry('filterKey', (seq, fn) =>
   filter(seq, ([k, _]) => fn(k)));
 
+export const filterValue = curry('filterValue', (seq, fn) =>
+  filter(seq, ([_, v]) => fn(v)));
+
 /// Like ferrum map but transforms the key specifically from key/value pairs.
 ///
 /// (A -> B) -> Sequence<[A, C]> -> Sequence<[B, C]>

@@ -2,15 +2,17 @@ import jstat from 'jstat';
 import {
   identity, type, isdef, dict, list, pairs, plus, pipe, reverse,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
+  enumerate, filter,
 } from 'ferrum';
 
 import { lerpSeq } from './math.js';
 import {
-   createFrom, coerce_list, parallel_foldl1, is_a,
+  createFrom, coerce_list, parallel_foldl1, is_a,
+  filterValue,
 } from './ferrumpp.js';
 
 const { assign } = Object;
-const { ceil, round, min, max, } = Math;
+const { ceil, round, min, max, abs, } = Math;
 
 /// Various statistical functions on a population of samples.
 export class Samples {
@@ -47,7 +49,7 @@ export class Samples {
   }
 
   data() {
-    const d = this._cache.data || this._cache.sorted || this._cache.sortedByVariance;
+    const d = this._cache.data || this._cache.sorted;
     if (isdef(d)) {
       return d;
     } else if (isdef(this._cache.points)) {
@@ -62,13 +64,6 @@ export class Samples {
 
   sorted() {
     return this._uncache('sorted', mapSort(identity));
-  }
-
-  sortedByVariance() {
-    return this._uncache('sortedByVariance', (d) => {
-      const m = this.mean();
-      return mapSort(d, (v) => v-m);
-    });
   }
 
   quanta() {
@@ -140,8 +135,33 @@ export class Samples {
   /// 90th percentile samples as another Samples type
   p90() {
     return this._uncache('p90', (d) => {
-      const sortedByVariance = this.sortedByVariance().slice(0, ceil(d.length * 0.9));
-      return createFrom(type(this), { _cache: { sortedByVariance } });
+      if (empty(d))
+        return type(this).new([]);
+
+      // Store the points in original order
+      const m = this.mean();
+      const pts = list(map(this.points(), ([x, y]) => ({
+        x, y, dev: abs(y-m),
+      })));
+
+      // Sort points by deviation on y axis. Use this sort order to
+      // assign a percentile rank to each point
+      pipe(
+        mapSort(pts, ({ dev }) => dev),
+        enumerate,
+        each(([idx, rec]) =>
+          assign(rec, { rank: idx/d.length })));
+
+      // Filter out those entries whose rank is too. This way of
+      // gathering a percentile subpopulation is a bit complicated,
+      // but it has two advantages: (1) it preserves the original
+      // order of the points (2) it produces a result of the expected
+      // size even if the population is completely linear (e.g. all values=0)
+      return pipe(
+        filter(pts, ({rank}) => rank <= 0.9),
+        map(({ x, y }) => [x, y]),
+        dict,
+        type(this).new);
     });
   }
 
