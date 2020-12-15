@@ -1,31 +1,29 @@
 import assert from 'assert';
-import { inspect } from 'util';
 import { resolve, relative } from 'path';
 import { readdir, readFile } from 'fs/promises';
 import marked from 'marked';
 import yaml from 'yaml';
 import {
   isdef, setdefault, obj, identity, dict, pipe, type, curry,
-  each, mapSort, map, flat, first, uniq, keys, join, filter,
+  each, mapSort, map, flat, first, uniq, keys, filter,
   enumerate, compose, trySlidingWindow, append, list, reverse,
   empty,
 } from 'ferrum';
 
 import { mapValue, nop, empty_seq, } from './ferrumpp.js';
-import { asyncMaskErrors, debug_seq, debug, roundMillis } from './stuff.js';
+import { asyncMaskErrors, debug, roundMillis } from './stuff.js';
 import { Samples } from './statistics.js';
 import { isReal } from './math.js';
 import { Markdown } from './txt.js';
 import { writeFile, sleep } from './asyncio.js';
 import {
-  plot2svg, histogram, histogramWith,
+  plot2svg, histogram,
   line as linePlot,
   lineWith as linePlotWith,
   correlation as correlationPlot
 } from './plot.js';
 
 const { assign } = Object;
-const { isFinite } = Number;
 
 // Name definitions:
 //

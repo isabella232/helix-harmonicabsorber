@@ -3,11 +3,8 @@
 /// decent api). I will probably port some of these to ferrumjs.
 
 import {
-  type,
-  curry, pipe,
-  iter, next, list, foldl, map, any, repeat, take, each,
-  cartesian2, enumerate, filter,
-  setdefault,
+  type, curry, pipe, iter, next, list, foldl, map, any, repeat,
+  take, each, enumerate, filter, setdefault,
 } from 'ferrum';
 
 const { assign } = Object;

@@ -1,6 +1,5 @@
 import lighthouse_lib_ from 'lighthouse';
-import { resolve } from 'path';
-import { range0, isdef, curry, enumerate, each } from 'ferrum';
+import { range0, isdef, curry, enumerate } from 'ferrum';
 import { debug } from './stuff.js';
 import { Proxychrome, cacheRequest } from './proxychrome.js';
 import { procTimeStr } from './settings.js';
@@ -82,7 +81,6 @@ const blockExternal = (opts) => {
 
 // Experiments --------------------------
 
-const emptyUrl = `file://${resolve('../assets/static/baseline/empty.html')}`;
 const pagesUrl = 'https://pages--adobe.hlx.page/creativecloud/en/ete/how-adobe-apps-work-together/';
 
 const deriveExp = (name, base, intercept) => ({

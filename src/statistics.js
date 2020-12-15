@@ -5,10 +5,8 @@ import {
   enumerate, filter,
 } from 'ferrum';
 
-import { lerpSeq } from './math.js';
 import {
   createFrom, coerce_list, parallel_foldl1, is_a,
-  filterValue,
 } from './ferrumpp.js';
 
 const { assign } = Object;

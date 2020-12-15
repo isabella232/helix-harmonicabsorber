@@ -196,7 +196,6 @@ export const histogramWith = curry('histogramWith', (plots_, opts) => {
   if (empty(meta.data()))
     return { src: "" };
 
-  const xmeta = meta.mirrorAxes();
   const binSz = meta.reccomendedBinSize();
   const height = maximum(map(plots, ([_, p]) => p.data().length));
   const src = Gnuplot.new();
