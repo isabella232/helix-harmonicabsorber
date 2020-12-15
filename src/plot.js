@@ -251,15 +251,12 @@ export const correlation = (plots_) => {
   // We are deactivating the tics, so the relative size used
   // here is of no great concern
   src.datatables(map(enumerate(plots), ([i, [k, p]]) => {
-    const r = p.p90().range() !== 0
-      ? p.p90().range()
-      : p.range() !== 0
-        ? p.range()
-        : 0.1;
-    const a = 1/r * 0.7;
-    const b = i + 0.2;
-    const xoff = -p.minimum();
-    return [k, dict(mapValue(p.points(), x => a*(x+xoff) + b))];
+    const m = p.mean();
+    const r = p.range() || 0.1;
+    const p90r = p.p90().range() || r;
+    const scale = 1/p90r * 0.7;
+    const yoff = i + 0.5 - m*scale;
+    return [k, dict(mapValue(p.points(), v => scale*v + yoff))];
   }));
 
   src.writeln(M(`
