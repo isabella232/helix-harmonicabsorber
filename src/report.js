@@ -1,23 +1,24 @@
 import assert from 'assert';
-import { resolve, relative } from 'path';
+import { resolve, relative, basename } from 'path';
 import { readdir, readFile } from 'fs/promises';
 import marked from 'marked';
 import yaml from 'yaml';
+import lighthouse_lib_ from 'lighthouse';
 import {
   isdef, setdefault, obj, identity, dict, pipe, type, curry,
   each, mapSort, map, flat, first, uniq, keys, filter,
   enumerate, compose, trySlidingWindow, append, list, reverse,
-  empty,
+  empty, ifdef,
 } from 'ferrum';
 
-import { mapValue, nop, empty_seq, } from './ferrumpp.js';
-import { asyncMaskErrors, debug, roundMillis } from './stuff.js';
+import { mapValue, nop, empty_seq, oneof, is_a, } from './ferrumpp.js';
+import { asyncMaskErrors, debug, roundMillis, lazy } from './stuff.js';
 import { Samples } from './statistics.js';
 import { isReal } from './math.js';
 import { Markdown } from './txt.js';
 import { writeFile, sleep } from './asyncio.js';
 import {
-  plot2svg, histogram,
+  histogram, histogramWith,
   line as linePlot,
   lineWith as linePlotWith,
   correlation as correlationPlot
@@ -25,10 +26,55 @@ import {
 
 const { assign } = Object;
 
+/** Lighthouse config used to generate the report */
+const lhCfg = lazy(lighthouse_lib_.generateConfig);
+
+/** Map { auditName -> auditEntry } */
+const lhAudits = lazy(() => pipe(
+  lhCfg().audits,
+  map((ent) => [
+    [ent.path, ent],
+    [basename(ent.path), ent]]), // strip directory
+  flat,
+  dict));
+
+/** Get the class defining one specific lighthouse audit */
+const lhAuditCls = (name) => lhAudits().get(name).implementation;
+
+/** Get the scoring parameters from an audit */
+const lhScoreParams = (audit) => {
+  if (is_a(audit, String))
+    return lhScoreParams(lhAuditCls(audit));
+
+  // Unfortunately the structure of defaultOptions is a bit fucked
+  // up so we perform a search (there has to be a better way?)
+  const search = (obj) => {
+    if (oneof(obj, [{}, null, undefined]))
+      return {};
+    const { p10, median, mobile, desktop, scoring } = obj;
+    return { // Huge bunch of fallback modes
+      ...search(desktop),
+      ...search(mobile),
+      ...search(scoring),
+      ...(isdef(p10) ? { p10 } : {}),
+      ...(isdef(median) ? { median } : {})};
+  };
+
+  return search(audit.defaultOptions)
+}
+
+/** Convert a lighthouse raw measurement to the appropriate score */
+const lhScoreFromRaw = (audit, raw) => {
+  if (is_a(audit, String))
+    return lhScoreFromRaw(lhAuditCls(audit), raw);
+  else
+    return audit.computeLogNormalScore(lhScoreParams(audit), raw);
+};
+
 // Name definitions:
 //
 // # Process
-//,
+//
 // We split out processing steps into two major parts.
 // First we collect any data and then we process it into
 // a palatable form. Load, Analysis and Report steps are
@@ -273,13 +319,13 @@ export class Report extends Markdown {
 
   async plot(desc, name, cont) {
     const p = `${this.dir}/${name}`;
-    if (cont.src === '') {
+    if (cont.isEmpty()) {
       debug(`[WARNING] Skipping empty plot ${relative('', p)}`)
       return;
     }
 
     this.img(`PLOT: ${desc}`, `./${name}.svg`);
-    await this.sched(plot2svg(p, cont));
+    await this.sched(cont.writeSvg(p));
   }
 
   async end() {
@@ -292,49 +338,59 @@ export class Report extends Markdown {
 }
 
 /// Report for a sequence from statistics.js
-const reportSeries = curry('reportSeries', (r, prefix, ser) => {
+const reportSeriesWith = curry('reportSeries', (r, prefix, ser, opts) => {
+  const { markings } = opts;
   r.code('yaml', yaml.stringify(ser.keyIndicators()));
   r.plot(`${prefix}-values`, `${prefix}/values`,
-    linePlot([[prefix, ser]]));
+    linePlotWith([[prefix, ser]], { ymarkings: markings }));
   r.plot(`${prefix}-sorted`, `${prefix}/sorted`,
-    linePlot([[prefix, ser.sorted()]]));
+    linePlotWith([[prefix, ser.sorted()]], { ymarkings: markings }));
   r.plot(`${prefix}-histogram`, `${prefix}/histogram`,
-    histogram([[prefix, ser]]));
+    histogramWith([[prefix, ser]], { xmarkings: markings }));
 });
 
 /// Generate a report for a single series of samples (raw+score)
-const reportSingleMetric = curry('reportSingleMetric', (r, { raw, score }) => {
+const reportSingleMetric = curry('reportSingleMetric', (r, { raw, score, rawMarkings }) => {
   r.h2('Raw');
-  reportSeries(r, 'raw', raw);
+  reportSeriesWith(r, 'raw', raw, { markings: rawMarkings });
 
   if (!empty_seq(score.data())) {
     r.h2('Score');
-    reportSeries(r, 'score', score);
+    reportSeriesWith(r, 'score', score, {});
   }
 });
 
 /// Generate a report for a single metric over multiple experiments
 /// E.g. the report for cumulative-layout-shift
-const reportMetricProgression = curry('reportMetricProgression', (r, db, extractor) => {
+const reportMetricProgression = curry('reportMetricProgression', (r, db, name, extractor) => {
+  const { implementation: audit } = lhAudits().get(name) || {};
+  const { p10, median } = ifdef(audit, lhScoreParams) || {};
+  const rawMarkings = [
+    ...(isdef(p10)    ? [[`score p10=${p10}`, p10]] : []),
+    ...(isdef(median) ? [[`score median=${median}`, median]] : [])];
+
   /// Raw data for each experiment
   each(enumerate(db), ([idx, [name, exp]]) =>
     r.withReport(`${idx}=${name}`, `samples/${name}`,
       reportSingleMetric(
-        extractor(exp))));
+        { ...extractor(exp), rawMarkings })));
 
   r.h2('Progression');
 
   // Track the progression in a statistical metric (e.g. the mediat)
   // from one sample collection run to the next
-  const statProgPlot = compose(
-    mapValue((stat) => pipe(
-      map(db, ([_, exp]) => stat(extractor(exp))),
-      // Filter out missing metrics
-      enumerate, // Make sure to include the index explicitly
-      filter(([_, v]) => isReal(v)),
-      dict,
-    )),
-    linePlotWith({ style: 'linespoints' }));
+  const statProgPlotWith = curry('statProgPlotWith',
+    (plots, opts) => pipe(
+      mapValue(plots, (stat) => pipe(
+        map(db, ([_, exp]) => stat(extractor(exp))),
+        // Filter out missing metrics
+        enumerate, // Make sure to include the index explicitly
+        filter(([_, v]) => isReal(v)),
+        dict,
+      )),
+      linePlotWith({ style: 'linespoints', ...opts })));
+
+  const statProgPlot = statProgPlotWith({});
 
   r.plot('SCORE Min/MaxMedianMean', 'progression/score',
     statProgPlot([
@@ -344,7 +400,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
       ['score:p90max',    s => s.score.p90().maximum()]]));
 
   r.plot('Min/Max/median/average progression', 'progression/value',
-    statProgPlot([
+    statProgPlotWith({ ymarkings: rawMarkings })([
       ['p90min',    s => s.raw.p90().minimum()],
       ['p90mean',   s => s.raw.p90().mean()],
       ['p90median', s => s.raw.p90().median()],
@@ -360,11 +416,11 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
       ['p90eccentricity',   s => s.raw.p90().eccentricity()],
       ['p90discretization', s => s.raw.p90().discretization()]]));
 
-
   r.h2('Overall Histogram');
 
   r.plot(`All raw values histogram`, `comparison/histogram/all_raw`,
-    histogram(mapValue(db, (e) => extractor(e).raw)));
+    histogramWith({ xmarkings: rawMarkings })(
+      mapValue(db, (e) => extractor(e).raw)));
 
   r.plot(`All scores histogram`, `comparison/histogram/all_score`,
     histogram(mapValue(db, (e) => extractor(e).score)));
@@ -372,7 +428,8 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
   r.h2('Overall Sorted');
 
   r.plot(`All raw values sorted`, `comparison/sorted/all_raw`,
-    linePlot(mapValue(db, (e) => extractor(e).raw.sorted())));
+    linePlotWith({ ymarkings: rawMarkings })(
+      mapValue(db, (e) => extractor(e).raw.sorted())));
 
   r.plot(`All scores sorted`, `comparison/sorted/all_score`,
     linePlot(mapValue(db, (e) => extractor(e).score.sorted())));
@@ -381,7 +438,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
 
   each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
     r.plot(`${n1} vs ${n2}`, `comparison/histogram/${e1.no}_vs_${e2.no}`,
-      histogram([
+      histogramWith({ xmarkings: rawMarkings })([
         [n1, extractor(e1).raw],
         [n2, extractor(e2).raw]])));
 
@@ -389,7 +446,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
 
   each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
     r.plot(`${n1} vs ${n2} sorted plot`, `comparison/sorted/${e1.no}_vs_${e2.no}`,
-      linePlot([
+      linePlotWith({ ymarkings: rawMarkings })([
         [n1, extractor(e1).raw.sorted()],
         [n2, extractor(e2).raw.sorted()]])));
 
@@ -397,7 +454,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, extract
 
   each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
     r.plot(`${n1} vs ${n2} line plot`, `comparison/line/${e1.no}_vs_${e2.no}`,
-      linePlot([
+      linePlotWith({ ymarkings: rawMarkings })([
         [n1, extractor(e1).raw],
         [n2, extractor(e2).raw]])));
 });
@@ -454,7 +511,7 @@ const reportRun = curry('reportRun', (r, db) => {
   const metas = mapSort(uniq(flat(map(db, ([_, rep]) => keys(rep.meta)))), identity);
   each(metas, (m) =>
     r.withReport(m, `meta/${m}`,
-      reportMetricProgression(db,
+      reportMetricProgression(db, `meta/${m}`,
         extractSeries(`meta/${m}`))));
 
 
@@ -463,7 +520,7 @@ const reportRun = curry('reportRun', (r, db) => {
   const measurements = mapSort(uniq(flat(map(db, ([_, rep]) => keys(rep.measurements)))), identity);
   each(measurements, (m) =>
     r.withReport(m, m,
-      reportMetricProgression(db,
+      reportMetricProgression(db, m,
         extractSeries(m))));
 
   r.h2(`Variance/Correlation`)

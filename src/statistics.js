@@ -92,18 +92,9 @@ export class Samples {
     return this._stats().max;
   }
 
-  /// Swap X and Y axes
-  mirrorAxes() {
-    return this._uncacheNonempty('mirrorAxes', () => pipe(
-      this.points(),
-      map(reverse),
-      dict,
-      type(this).new));
-  }
-
   /// maximum - minimum
   range() {
-    return this._stats().range;
+    return this._stats().range || 0;
   }
 
   sum() {
@@ -215,7 +206,7 @@ export class Samples {
     return this._uncacheNonempty('reccomendHistogramBinSize', () => {
       const p90 = this.p90();
       const rec = p90.stdev() * 3.49 * p90.data().length**(-1/13);
-      return rec === 0 ? 0.1 : rec;
+      return rec === 0 ? 0.1 : max(rec, 1e-12);
     });
   }
 

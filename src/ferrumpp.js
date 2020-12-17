@@ -4,7 +4,7 @@
 
 import {
   type, curry, pipe, iter, next, list, foldl, map, any, repeat,
-  take, each, enumerate, filter, setdefault,
+  take, each, enumerate, filter, setdefault, contains, eq,
 } from 'ferrum';
 
 const { assign } = Object;
@@ -133,3 +133,8 @@ export const empty_seq = (seq) => {
 
 /// Empty function
 export const nop = () => {};
+
+export const oneofWith = curry('oneof',
+  (obj, options, fn) => contains(options, fn(obj)));
+
+export const oneof = oneofWith(eq);

@@ -7,6 +7,7 @@ import {
 import { throws } from './ferrumpp.js';
 
 const { round } = Math;
+const { assign } = Object;
 
 /// For debug output
 export const debug = (...args) => console.error(...args);
@@ -52,3 +53,14 @@ export const asyncMaskErrors = async (msg, fn) => {
     console.warn(`[WARNING] ${msg}:`, e);
   }
 }
+
+export const lazy = (fn) => {
+  let computed = false, cache = null;
+  return () => {
+    if (!computed) {
+      computed = true;
+      cache = fn();
+    }
+    return cache;
+  };
+};

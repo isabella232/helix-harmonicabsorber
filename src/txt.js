@@ -1,4 +1,5 @@
-import { each, enumerate } from 'ferrum';
+import { Deepclone, each, enumerate, type, deepclone } from 'ferrum';
+import { createFrom } from './ferrumpp.js';
 
 const { assign } = Object;
 
@@ -9,6 +10,10 @@ export class Txt {
 
   constructor() {
     assign(this, {  buf: [] });
+  }
+
+  [Deepclone.sym]() {
+    return createFrom(type(this), { buf: deepclone(this.buf) });
   }
 
   write_seq(seq) {
