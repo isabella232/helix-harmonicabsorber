@@ -242,7 +242,7 @@ const parse = (plots_) => {
 }
 
 const addmarkings = (src, opts = {}) => {
-  const { xmarkings = [], ymarkings = [], ymin = 0, ymax = 1 } = opts;
+  const { xmarkings = [], ymarkings = [] } = opts;
 
   each(enumerate(ymarkings), ([idx, [name, no]]) =>
     src.plots.writeln(`${no} title ${strlit(name)}`));
@@ -278,13 +278,14 @@ export const lineWith = curry('lineWith', (plots_, opts) => {
     set key ${keyopts}
     set xrange [${xmeta.minimum()-xoff}:${xmeta.maximum()+xoff}]
     set yrange [${ymin}:${ymax}]
+    set trange [${ymin}:${ymax}]
   `));
 
   each(plots, ([name, _]) =>
     src.plots.writeln(
       `${doll(name)} title ${strlit(name)} with ${style}`));
 
-  addmarkings(src, { xmarkings, ymarkings, ymin, ymax });
+  addmarkings(src, { xmarkings, ymarkings });
 
   return src;
 });
@@ -319,13 +320,14 @@ export const histogramWith = curry('histogramWith', (plots_, opts) => {
     set boxwidth ${binSz}
     set xrange [${meta.minimum()-xoff}:${meta.maximum()+xoff}]
     set yrange [${ymin}:${ymax}]
+    set trange [${ymin}:${ymax}]
     set style fill transparent solid 0.5 noborder
   `));
 
   each(plots, ([name, _]) =>
     src.plots.writeln(`${doll(name)} title ${strlit(name)} with ${style}`));
 
-  addmarkings(src, { xmarkings, ymarkings, ymin, ymax });
+  addmarkings(src, { xmarkings, ymarkings });
 
   return src;
 });
