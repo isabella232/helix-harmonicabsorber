@@ -1,11 +1,11 @@
-import { readFile } from 'fs/promises';
+import { readFile, rm } from 'fs/promises';
 import lodash from 'lodash';
 import Svgo from 'svgo';
 import {
   each, empty, map, first, enumerate, pipe,
   dict, values, flat, reject, curry,
   multiline as M,
-  type, Deepclone, obj, deepclone, join, exec,
+  type, Deepclone, obj, deepclone, join, filter, isdef,
 } from 'ferrum';
 import { mapValue, is_a, createFrom, nop } from './ferrumpp.js';
 import { Barrier, sleep, spawn, writeFile } from './asyncio.js';
@@ -36,9 +36,10 @@ class GnuplotSched {
     });
   }
 
-  enqueue(file, post = nop) {
+  enqueue(file, opts = {}) {
+    const { post = nop, output } = opts;
     const barrier = new Barrier();
-    this.queue.push({file, barrier, post});
+    this.queue.push({file, barrier, post, output});
     this._tick();
     return barrier;
   }
@@ -68,7 +69,16 @@ class GnuplotSched {
 
     try {
       this.procno += 1;
+
+      // Remove the file so post processing can pick up on it
+      // if gnuplot entirely neglected to process the file
+      await Promise.all(pipe(
+        filter(jobs, ({ output }) => isdef(output)),
+        map(({ output }) => rm(output, { force: true }))));
+      // Run gnuplot
       await spawn('gnuplot', ...map(jobs, ({ file }) => file));
+      // Run post processing (e.g. load the generated file and
+      // validate it or optimize it to pick up on gnuplot messing up)
       await Promise.all(map(jobs, async (job) => {
         job.postResult = await job.post();
       }));
