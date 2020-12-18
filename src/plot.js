@@ -1,16 +1,17 @@
 import { readFile } from 'fs/promises';
 import lodash from 'lodash';
+import Svgo from 'svgo';
 import {
   each, empty, map, first, enumerate, pipe,
   dict, values, flat, reject, curry,
   multiline as M,
-  type, Deepclone, obj, deepclone, join,
+  type, Deepclone, obj, deepclone, join, exec,
 } from 'ferrum';
-import { mapValue, is_a, createFrom } from './ferrumpp.js';
-import { Barrier, spawn, writeFile } from './asyncio.js';
+import { mapValue, is_a, createFrom, nop } from './ferrumpp.js';
+import { Barrier, sleep, spawn, writeFile } from './asyncio.js';
 import { Samples } from './statistics.js';
 import { clamp, maximum } from './math.js';
-import { catchall } from './stuff.js';
+import { catchall, debug } from './stuff.js';
 import { Txt } from './txt.js';
 
 const { assign } = Object;
@@ -35,11 +36,11 @@ class GnuplotSched {
     });
   }
 
-  enqueue(filename) {
-    const r = new Barrier();
-    this.queue.push([filename, r]);
+  enqueue(file, post = nop) {
+    const barrier = new Barrier();
+    this.queue.push({file, barrier, post});
     this._tick();
-    return r;
+    return barrier;
   }
 
   /// Let the scheduler do it's thing
@@ -47,41 +48,66 @@ class GnuplotSched {
     if (this.procno >= this.maxProcs)
       return;
 
-    catchall(() => {
-      while (!empty(this.queue) && this.procno <= this.maxProcs)
-        this._fork(this.queue.splice(0, this.batchSz));
+    while (!empty(this.queue) && this.procno <= this.maxProcs)
+      this._fork(this.queue.splice(0, this.batchSz));
 
-      let growth = 1;
-      if (this.procno < this.maxProcs) // Short on jobs
-        growth = 0.7;
-      else if (!empty(this.queue))
-        growth = 1.3;
+    let growth = 1;
+    if (this.procno < this.maxProcs) // Short on jobs
+      growth = 0.7;
+    else if (!empty(this.queue))
+      growth = 1.3;
 
-      this.batchSz = clamp(round(this.batchSz * growth),
-        this.minBatchSz, this.maxBatchSz);
-    });
+    this.batchSz = clamp(round(this.batchSz * growth),
+      this.minBatchSz, this.maxBatchSz);
   }
 
   /// Launch an actual gnuplot instance
-  async _fork(pairs) {
-    if (empty(pairs))
+  async _fork(jobs) {
+    if (empty(jobs))
       return;
 
     try {
       this.procno += 1;
-      await spawn('gnuplot', ...map(pairs, first));
-    } catch (_) {
-      // pass
+      await spawn('gnuplot', ...map(jobs, ({ file }) => file));
+      await Promise.all(map(jobs, async (job) => {
+        job.postResult = await job.post();
+      }));
+    } catch (e) {
+      // Gnuplot tends to fail the entire bunch when there is just
+      // a single bad file. This error handler performs error isolation
+      // by splitting each batch. This will ultimately find the specific
+      // broken files (and compile all others) in O(log(n)). This if
+      // statement is the termination condition
+      if (jobs.length === 1) {
+        const [{ barrier }] = jobs;
+        barrier.reject(e);
+        return;
+      }
+
+      debug(`[WARNING] Gnuplot failed with:`, e,
+        `\n    On the following files:`
+          + join('')(
+            map(jobs, ({ file }) => `\n        ${file}`)));
+
+      // Split the batch and retry
+      const sub = [
+        jobs.splice(0, round(jobs.length/2)),
+        jobs];
+      await Promise.all(map(sub, (set) => this._fork(set)));
+
+      return;
+    } finally {
+      // This always runs (even if catch returns)
+      this.procno -= 1;
+      this._tick();
     }
 
-    try {
-      each(pairs, ([_, barrier]) => barrier.resolve());
-    } catch (_) {
-      // pass
-    }
-
-    this.procno -= 1;
-    this._tick();
+    // This runs only of the try block is successfully;
+    // it is not part of the block because this could
+    // lead the barriers being resolves repeatedly if
+    // resolve() itself throws (unlikely)
+    each(jobs, ({ barrier, postResult }) =>
+      barrier.resolve(postResult));
   }
 }
 
@@ -97,6 +123,8 @@ const ident = (n) => {
 const doll = (n) => `$${ident(n)}`;
 
 const strlit = JSON.stringify;
+
+const svgo = new Svgo();
 
 class Gnuplot {
   static new(opts) {
@@ -180,12 +208,17 @@ class Gnuplot {
     `));
 
     await writeFile(src, code.toString());
-    await sched.enqueue(src);
 
-    // Enable SVG anti aliasing
-    await writeFile(svg,
-      (await readFile(svg, 'utf8'))
-        .replace(`crispEdges`, `geometricPrecision`));
+    await sched.enqueue(src, async () => {
+      const generated = await readFile(svg, 'utf8')
+
+      // Enable SVG anti aliasing and run the svg optimizer
+      // (primarily to check whether the svg is well formed)
+      const { data: optimized } = await svgo.optimize(
+        generated.replace(`crispEdges`, `geometricPrecision`));
+
+      await writeFile(svg, optimized);
+    });
   }
 }
 

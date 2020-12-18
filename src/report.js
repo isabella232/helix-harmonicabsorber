@@ -324,8 +324,13 @@ export class Report extends Markdown {
       return;
     }
 
-    this.img(`PLOT: ${desc}`, `./${name}.svg`);
-    await this.sched(cont.writeSvg(p));
+    try {
+      this.img(`PLOT: ${desc}`, `./${name}.svg`);
+      await this.sched(cont.writeSvg(p));
+    } catch (e) {
+      debug(`[ERROR] Failed to plot ${p}:`, e);
+      throw e;
+    }
   }
 
   async end() {
