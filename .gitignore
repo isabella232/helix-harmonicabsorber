@@ -1,0 +1,4 @@
+harmonicabsorber_*
+report_2[0-9][0-9][0-9]*
+report*/**/*.html
+report_00006_*/**/*.png
