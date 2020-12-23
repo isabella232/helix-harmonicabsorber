@@ -1,20 +1,27 @@
 import assert from 'assert';
+import { inspect } from 'util';
 import { resolve, relative, basename } from 'path';
 import { readdir, readFile } from 'fs/promises';
+import lodash from 'lodash';
 import marked from 'marked';
 import yaml from 'yaml';
 import lighthouse_lib_ from 'lighthouse';
 import {
   isdef, setdefault, obj, identity, dict, pipe, type, curry,
   each, mapSort, map, flat, first, uniq, keys, filter,
-  enumerate, compose, trySlidingWindow, append, list, reverse,
-  empty, ifdef,
+  enumerate, trySlidingWindow, append, list, reverse,
+  empty, ifdef, cartesian, slidingWindow, typename, zip2,
 } from 'ferrum';
 
-import { mapValue, nop, empty_seq, oneof, is_a, } from './ferrumpp.js';
+import ByteEfficiencyAudit from 'lighthouse/lighthouse-core/audits/byte-efficiency/byte-efficiency-audit.js';
+
+import {
+  mapValue, nop, empty_seq, oneof, is_a, coerce_list, filterValue,
+  hasBase,
+} from './ferrumpp.js';
 import { asyncMaskErrors, debug, roundMillis, lazy } from './stuff.js';
 import { Samples } from './statistics.js';
-import { isReal } from './math.js';
+import { isReal, roundTo, weightedAverage } from './math.js';
 import { Markdown } from './txt.js';
 import { writeFile, sleep } from './asyncio.js';
 import {
@@ -25,9 +32,11 @@ import {
 } from './plot.js';
 
 const { assign } = Object;
+const { floor } = Math;
+const { startCase } = lodash;
 
 /** Lighthouse config used to generate the report */
-const lhCfg = lazy(lighthouse_lib_.generateConfig);
+const lhCfg = lazy(() => lighthouse_lib_.generateConfig());
 
 /** Map { auditName -> auditEntry } */
 const lhAudits = lazy(() => pipe(
@@ -64,11 +73,52 @@ const lhScoreParams = (audit) => {
 }
 
 /** Convert a lighthouse raw measurement to the appropriate score */
-const lhScoreFromRaw = (audit, raw) => {
-  if (is_a(audit, String))
-    return lhScoreFromRaw(lhAuditCls(audit), raw);
-  else
-    return audit.computeLogNormalScore(lhScoreParams(audit), raw);
+const lhScoreFromRaw = curry('lhScoreFromRaw', (raw, audit) => {
+  const a = lhAuditCls(audit);
+
+  // https://github.com/GoogleChrome/lighthouse/issues/11881
+
+  // Lord. Give me courage.
+  // https://github.com/GoogleChrome/lighthouse/issues/11882
+  // The constant is defined in the file and not exposed, hence
+  // pasting 600
+  if (audit === 'server-response-time')
+    return Number(raw < 600);
+
+  // https://github.com/GoogleChrome/lighthouse/issues/11883
+  const isWasted = hasBase(a, ByteEfficiencyAudit)
+    || oneof(audit, ['uses-rel-preload', 'uses-rel-preconnect', 'render-blocking-resources', 'uses-http2']);
+  if (isWasted)
+    return ByteEfficiencyAudit.scoreForWastedMs(raw);
+
+  // More courage please
+  // https://github.com/GoogleChrome/lighthouse/issues/11881#issuecomment-750401499
+  if (audit === 'redirects')
+    return 1;
+
+  if (a.meta.scoreDisplayMode === 'binary')
+    return raw; // Already either 1 or 0
+
+  const lnp = lhScoreParams(a);
+  if (isReal(lnp.p10) && isReal(lnp.median))
+    return a.computeLogNormalScore(lnp, raw);
+
+  assert(false, `Don't know how to score ${audit}`);
+});
+
+/** Compute the lighthouse weighted average score */
+const lhWeightedAverage = (subscores_) => {
+  // NOTE: This all *happens* to work instead of sticking to the
+  // proper interfaces. Lighthouse implementation details are used.
+  // If this breaks, check the source code of
+  // lighthouse-core/scoring.js to see whether anything changed and
+  // update this accordingly.
+  const subscores = obj(subscores_);
+  return pipe(
+    lhCfg().categories.performance.auditRefs,
+    map(({ id, weight }) => [subscores[id], weight]),
+    filter(([ score, weight ]) => isReal(score) && weight > 0),
+    weightedAverage);
 };
 
 // Name definitions:
@@ -132,9 +182,12 @@ const loadSingleLighthouseRun = async (f) => {
   return {
     time: new Date(d.fetchTime),
     meta: { score: d.categories.performance.score },
-    measurements:
-      obj(mapValue(d.audits,
-        ({ score, numericValue: raw }) => ({ score, raw }))),
+    measurements: pipe(
+      filterValue(d.audits, ({ scoreDisplayMode: m }) =>
+        !oneof(m, ['notApplicable', 'informative', 'manual'])),
+      mapValue(({ score, numericValue: raw }) =>
+        ({ score, raw })),
+      obj),
   };
 };
 
@@ -355,14 +408,16 @@ const reportSeriesWith = curry('reportSeries', (r, prefix, ser, opts) => {
 });
 
 /// Generate a report for a single series of samples (raw+score)
-const reportSingleMetric = curry('reportSingleMetric', (r, { raw, score, rawMarkings }) => {
+const reportSingleMetric = curry('reportSingleMetric', (r, { raw, rawMarkings, name, ...derived }) => {
   r.h2('Raw');
   reportSeriesWith(r, 'raw', raw, { markings: rawMarkings });
 
-  if (!empty_seq(score.data())) {
-    r.h2('Score');
-    reportSeriesWith(r, 'score', score, {});
-  }
+  each(derived, ([name, vals]) => {
+    if (empty_seq(vals.data())) return;
+
+    r.h2(startCase(name));
+    reportSeriesWith(r, name, vals, {});
+  });
 });
 
 /// Generate a report for a single metric over multiple experiments
@@ -535,10 +590,110 @@ const reportRun = curry('reportRun', (r, db) => {
       reportVariance(exp)));
 });
 
+/** Extra metrics we derive from the lighthouse generated metrics */
+const augument = (db) => {
+  // Generate an iterator of all series in the db
+  const series = () => flat(
+    map(db, ([en, exp]) =>
+      map(exp.measurements, ([mn, meas]) =>
+        [en, exp, mn, meas])));
+
+  // Augument a series of measurements
+  const augSeries = (name, fn) =>
+    each(series(), ([en, exp, mn, meas]) =>
+      assign(meas, {
+        [name]: Samples.new(dict(fn(en, exp, mn, meas))) }));
+
+  // Calculate a weighted average meta score from some score
+  // (could be the normal score or a derived dimension)
+  const augWeightedAverage = (name) =>
+    each(db, ([_, exp]) => assign(exp.meta, {
+      [name]:  pipe(
+        // Generate a list of the lighthouse runs to calculate the average for
+        map(exp.measurements, ([_, m]) =>
+          m[name].points().keys()),
+        flat,
+        uniq,
+        // For each lighthouse run, assemble the map measurmentName => value
+        map((k) => [k,
+          mapValue(exp.measurements, (m) =>
+            m[name].points().get(k))]),
+        // For each lighthouse run, calculate the weighted average
+        mapValue(lhWeightedAverage),
+        // Turn into a dictionary
+        dict,
+        Samples.new)}));
+
+  // Augument each measurment and add a meta measurment for the
+  // entire experiment
+  const augSeriesAndAvg = (name, fn) => {
+    augSeries(name, fn);
+    augWeightedAverage(name);
+  };
+
+  // Manually compute the score with arbitrary precision (precise score)
+  augSeriesAndAvg('pScore', (_0, _1, audit, { raw }) =>
+    mapValue(raw.points(),
+      lhScoreFromRaw(audit)));
+
+  // Score calculated by ourselves to validate our methods
+  // of deriving the score
+  augSeriesAndAvg('score-difference', (_0, _1, audit, { raw, score }) =>
+    map(raw.points(), ([k, v]) => [k,
+      roundTo(lhScoreFromRaw(v, audit), 0.01) - score.points().get(k)]));
+
+
+  // Score calculated by ourselves to validate our methods
+  // of deriving the score
+  augSeriesAndAvg('pScore-difference', (_0, _1, audit, { pScore, score }) =>
+    map(pScore.points(), ([k, v]) => [k,
+      v - score.points().get(k)]));
+  //
+  // // Apply various sliding windows over the precise score, drop a variable
+  // // number of to empirically
+  // const windowSize = [2,3,4,5,10,20,50];
+  // const percentile = [1, 0.95, 0.90, 0.80]; 
+  // const scoreType = dict([
+  //   ['mean', (ser) => ser.mean()],
+  //   ['median', (ser) => ser.median()]]);
+  //
+  // each(cartesian([windowSize, percentile, scoreType]), (winSz, perc, typ_) => {
+  //   const [typName, typFn] = typ_;
+  //   const drop = floor(winSz*perc);
+  //   const name = `pScore[${winSz}-${drop} ${typName}]`;
+  //   if (drop === 0) return;
+  //
+  //   each(series(), ([_0, _1, _2, meas]) => {
+  //     if (isdef(meas[name])) return;
+  //     const values = pipe(
+  //       // This gives us a sliding window over pairs x => y
+  //       slidingWindow(meas.pScore.points()),
+  //       // This guarantees the sliding window is a list
+  //       map(coerce_list),
+  //       // This gives us a mapping x0 => [[x0, y0], [x1, y1], ...]
+  //       map((points) => [points[0][0], points]),
+  //       // This gives us x => (median/mean of y sliding window)
+  //       mapValue((pts) => typFn(Samples.new(pts).drop(drop))),
+  //       // This converts to series
+  //       dict,
+  //       Samples.new);
+  //     assign(meas, { [name]: values });
+  //   });
+  //
+  //   augExperimentAverage(name);
+  // });
+  //
+  // augExperimentAverageOf('p90range', ({ raw }) => raw.p90().range());
+  // augExperimentAverageOf('p90stdev', ({ raw }) => raw.p90().stdev());
+  // augExperimentAverageOf('p90eccentricity', ({ raw }) => raw.p90().eccentricity());
+  // augExperimentAverageOf('p90discretization', ({ raw }) => raw.p90().discretization());
+  // augExperimentAverageOf('outlandishness', ({ raw }) => raw.p90().outlandishness());
+};
+
 /// Generate a HTML report for a harmonicabsorber gather run
 export const report = async (ind, out) => {
   const db = await loadRun(ind);
-  //console.log(inspect(db.get('pages+cached+noexternal+nojs'), { depth: null, color: true }));
+  augument(db);
 
   const forks = [];
   const scheduler = (p) => forks.push(p);

@@ -5,6 +5,7 @@
 import {
   type, curry, pipe, iter, next, list, foldl, map, any, repeat,
   take, each, enumerate, filter, setdefault, contains, eq,
+  extend1, takeWhile, isdef, is,
 } from 'ferrum';
 
 const { assign } = Object;
@@ -138,3 +139,15 @@ export const oneofWith = curry('oneof',
   (obj, options, fn) => contains(options, fn(obj)));
 
 export const oneof = oneofWith(eq);
+
+/** Get the super class of a class */
+export const basetype = (t) => t.__proto__;
+
+/** Enumerate super classes of a class */
+export const basetypes = (t) => pipe(
+  extend1(t, basetype),
+  takeWhile(isdef));
+
+/** Check if a type has a given base class */
+export const hasBase = (t, base) =>
+    contains(basetypes(t), is(base));

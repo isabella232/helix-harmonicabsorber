@@ -1,6 +1,7 @@
+import assert from 'assert';
 import jstat from 'jstat';
 import {
-  identity, type, isdef, dict, list, pairs, plus, pipe, reverse,
+  identity, type, isdef, dict, list, pairs, plus, pipe,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
   enumerate, filter,
 } from 'ferrum';
@@ -10,7 +11,7 @@ import {
 } from './ferrumpp.js';
 
 const { assign } = Object;
-const { ceil, round, min, max, abs, } = Math;
+const { ceil, round, min, max, abs, floor, } = Math;
 
 /// Various statistical functions on a population of samples.
 export class Samples {
@@ -121,25 +122,24 @@ export class Samples {
     return this._uncacheNonempty('skewness', jstat.skewness);
   }
 
-  /// 90th percentile samples as another Samples type
-  p90() {
-    return this._uncache('p90', (d) => {
-      if (empty(d))
-        return type(this).new([]);
-
+  dropExtreme(toDrop) {
+    assert(toDrop <= this.data().length,
+      `Cannot drop ${toDrop} elements from list of ${this.data().length}`);
+    return this._uncache(`dropExteme-${toDrop}`, (d) => {
       // Store the points in original order
       const m = this.mean();
       const pts = list(map(this.points(), ([x, y]) => ({
         x, y, dev: abs(y-m),
       })));
 
-      // Sort points by deviation on y axis. Use this sort order to
-      // assign a percentile rank to each point
+      // Sort points by deviation on y axis in decreasing order.
+      // Use this sort order to assign an *deviation index*; zero
+      // being the greatest deviation
       pipe(
-        mapSort(pts, ({ dev }) => dev),
+        mapSort(pts, ({ dev }) => -dev),
         enumerate,
         each(([idx, rec]) =>
-          assign(rec, { rank: idx/d.length })));
+          assign(rec, { idx })));
 
       // Filter out those entries whose rank is too. This way of
       // gathering a percentile subpopulation is a bit complicated,
@@ -147,11 +147,20 @@ export class Samples {
       // order of the points (2) it produces a result of the expected
       // size even if the population is completely linear (e.g. all values=0)
       return pipe(
-        filter(pts, ({rank}) => rank <= 0.9),
+        filter(pts, ({idx}) => idx >= toDrop),
         map(({ x, y }) => [x, y]),
         dict,
         type(this).new);
     });
+  }
+
+  percentile(p) {
+    return this.dropExtreme(floor(this.data().length * (1-p)));
+  }
+
+  /// 90th percentile samples as another Samples type
+  p90() {
+    return this.percentile(0.9);
   }
 
   /// Half of the population that is <= mean
