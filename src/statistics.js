@@ -3,9 +3,10 @@ import jstat from 'jstat';
 import {
   identity, type, isdef, dict, list, pairs, plus, pipe,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
-  enumerate, filter,
+  enumerate, filter, range,
 } from 'ferrum';
 
+import { TolerantNumber } from './math.js';
 import {
   createFrom, coerce_list, parallel_foldl1, is_a,
 } from './ferrumpp.js';
@@ -219,6 +220,13 @@ export class Samples {
     });
   }
 
+  /// Returns the confidence interval of the mean as a TolerantNumber
+  meanWithConfidence(alpha = 0.05) {
+    const [a, z] = jstat.normalci(
+      this.mean(), alpha, this.stdev(), this.data().length);
+    return TolerantNumber.fromInterval(a, z);
+  }
+
   /// Assemble a histogram
   histogram(binSize = this.reccomendedBinSize()) {
     const d = this.data();
@@ -244,6 +252,8 @@ export class Samples {
       p90eccentricity: this.p90().eccentricity(),
       p90discretization: this.p90().discretization(),
       outlandishness: this.outlandishness(),
+      confidence: this.meanWithConfidence().magnitude(),
+      p90confidence: this.p90().meanWithConfidence().magnitude(),
     };
   }
 }

@@ -151,3 +151,5 @@ export const basetypes = (t) => pipe(
 /** Check if a type has a given base class */
 export const hasBase = (t, base) =>
     contains(basetypes(t), is(base));
+
+export const apply1 = curry('apply1', (arg, fn) => fn(arg));

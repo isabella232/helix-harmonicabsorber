@@ -280,7 +280,7 @@ export const lineWith = curry('lineWith', (plots_, opts) => {
   const off = max(meta.range() * 0.02, 1e-3);
   const ymin = meta.minimum()-off;
   const ymax = meta.maximum()+off;
-  const height = 480 + plots.size*10;
+  const height = 480 + plots.size*20;
   const xoff = xmeta.range() === 0 ? 0.01 : 0;
   const src = Gnuplot.new({ height }).datatables(plots);
 

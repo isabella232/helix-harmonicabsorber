@@ -6,22 +6,24 @@ import lodash from 'lodash';
 import marked from 'marked';
 import yaml from 'yaml';
 import lighthouse_lib_ from 'lighthouse';
+import lighthouse_stat_ from 'lighthouse/lighthouse-core/lib/statistics.js';
 import {
   isdef, setdefault, obj, identity, dict, pipe, type, curry,
   each, mapSort, map, flat, first, uniq, keys, filter,
   enumerate, trySlidingWindow, append, list, reverse,
   empty, ifdef, cartesian, slidingWindow, typename, zip2,
+  range, second, take,
 } from 'ferrum';
 
 import ByteEfficiencyAudit from 'lighthouse/lighthouse-core/audits/byte-efficiency/byte-efficiency-audit.js';
 
 import {
   mapValue, nop, empty_seq, oneof, is_a, coerce_list, filterValue,
-  hasBase,
+  hasBase, apply1,
 } from './ferrumpp.js';
 import { asyncMaskErrors, debug, roundMillis, lazy } from './stuff.js';
 import { Samples } from './statistics.js';
-import { isReal, roundTo, weightedAverage } from './math.js';
+import { isReal, roundTo, weightedAverage, TolerantNumber } from './math.js';
 import { Markdown } from './txt.js';
 import { writeFile, sleep } from './asyncio.js';
 import {
@@ -101,7 +103,7 @@ const lhScoreFromRaw = curry('lhScoreFromRaw', (raw, audit) => {
 
   const lnp = lhScoreParams(a);
   if (isReal(lnp.p10) && isReal(lnp.median))
-    return a.computeLogNormalScore(lnp, raw);
+    return lighthouse_stat_.getLogNormalScore(lnp, raw);
 
   assert(false, `Don't know how to score ${audit}`);
 });
@@ -117,7 +119,8 @@ const lhWeightedAverage = (subscores_) => {
   return pipe(
     lhCfg().categories.performance.auditRefs,
     map(({ id, weight }) => [subscores[id], weight]),
-    filter(([ score, weight ]) => isReal(score) && weight > 0),
+    filter(([ score, weight ]) =>
+      (isReal(score) || score instanceof TolerantNumber) && weight > 0),
     weightedAverage);
 };
 
@@ -318,6 +321,21 @@ const extractSeries = curry('extractSeries', (exp, name) => {
   return r;
 });
 
+/**
+ * Samples class used to indicate that the samples include confidence intervals.
+ * Stub, mostly.
+ */
+class SamplesWithConfidence {
+  static new(...args) { return new SamplesWithConfidence(...args); }
+  constructor(v) { assign(this, { v }); }
+  data() {
+    return list(map(this.v, second));
+  }
+  points() {
+    return this.v;
+  }
+}
+
 /// Helper for generating report files
 export class Report extends Markdown {
   static new(dir, opts) {
@@ -398,6 +416,16 @@ export class Report extends Markdown {
 /// Report for a sequence from statistics.js
 const reportSeriesWith = curry('reportSeries', (r, prefix, ser, opts) => {
   const { markings } = opts;
+
+  if (ser instanceof SamplesWithConfidence) {
+    r.plot(`${prefix}-values`, `${prefix}/values`,
+      linePlotWith([
+        [`${prefix}-lower`, dict(mapValue(ser.points(), t => t.lower()))],
+        [`${prefix}-upper`, dict(mapValue(ser.points(), t => t.upper()))],
+      ], { ymarkings: markings }));
+    return;
+  }
+
   r.code('yaml', yaml.stringify(ser.keyIndicators()));
   r.plot(`${prefix}-values`, `${prefix}/values`,
     linePlotWith([[prefix, ser]], { ymarkings: markings }));
@@ -434,6 +462,32 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
     r.withReport(`${idx}=${name}`, `samples/${name}`,
       reportSingleMetric(
         { ...extractor(exp), rawMarkings })));
+
+  if (name === 'meta/scoreEstimate') {
+    r.h2('Comparison');
+
+    r.plot(`All estimates`, `comparison/all_estimates`,
+      linePlot(pipe(
+        map(db, ([name, e]) => {
+          const pts = extractor(e).raw.points();
+          return [
+            [`${name}-lower`, Samples.new(dict(mapValue(pts, (p) => p.lower())))],
+            [`${name}-upper`, Samples.new(dict(mapValue(pts, (p) => p.lower())))],
+          ]
+        }),
+        flat)));
+
+    each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
+      r.plot(`${n1} vs ${n2} sorted plot`, `comparison/sorted/${e1.no}_vs_${e2.no}`,
+        linePlot([
+          [`${n1}-lower`, Samples.new(dict(mapValue(extractor(e1).raw.points(), (p) => p.lower())))],
+          [`${n1}-upper`, Samples.new(dict(mapValue(extractor(e1).raw.points(), (p) => p.upper())))],
+          [`${n2}-lower`, Samples.new(dict(mapValue(extractor(e2).raw.points(), (p) => p.lower())))],
+          [`${n2}-upper`, Samples.new(dict(mapValue(extractor(e2).raw.points(), (p) => p.upper())))],
+        ])));
+
+    return;
+  }
 
   r.h2('Progression');
 
@@ -631,6 +685,63 @@ const augument = (db) => {
     augWeightedAverage(name);
   };
 
+  // Estimate of raw values based on multiple samples
+  each(series(), ([_0, _1, audit, meas]) => {
+    const pts = list(meas.raw.points());
+
+    // We estimate the series at every sample s_i by taking the
+    // average over samples s_0..s_i and calculating the confidence
+    // interval
+    //
+    // This in essence gives us a visual display of how the confidence
+    // of our mean estimation changes as we accumulate more and more
+    // measurements
+    const rawEstimate = pipe(
+      enumerate(pts),
+      map(([idx, [key, _]]) => pipe(
+          pts,
+          map(second), // values only
+          take(idx+1),
+          Samples.new,
+          apply1((ser) => {
+            return [key, ser.p90().meanWithConfidence()];
+          }))),
+      dict);
+
+    // The estimates on the raw score, but now mapped into the scoring
+    // interval [0; 1].
+    const intoScore = lhScoreFromRaw(audit);
+    const scoreEstimate = pipe(
+      rawEstimate,
+      mapValue(t => t.applyScalar(intoScore)),
+      dict);
+
+    assign(meas, {
+      rawEstimate: SamplesWithConfidence.new(rawEstimate),
+      scoreEstimate: SamplesWithConfidence.new(scoreEstimate),
+    });
+  });
+
+  // Weighted average of the score with estimate
+  each(db, ([_, exp]) => assign(exp.meta, {
+    'scoreEstimate':  pipe(
+      // Generate a list of the lighthouse runs to calculate the average for
+      map(exp.measurements, ([_, m]) =>
+        m['scoreEstimate'].points().keys()),
+      flat,
+      uniq,
+      // For each lighthouse run, assemble the map measurmentName => value
+      map((k) => [k,
+        mapValue(exp.measurements, (m) =>
+          m['scoreEstimate'].points().get(k))]),
+      // For each lighthouse run, calculate the weighted average
+      mapValue(lhWeightedAverage),
+      // Turn into a dictionary
+      dict,
+      SamplesWithConfidence.new,
+      apply1((x) => (console.log("megaten", exp.name, x), x)),
+    )}));
+
   // Manually compute the score with arbitrary precision (precise score)
   augSeriesAndAvg('pScore', (_0, _1, audit, { raw }) =>
     mapValue(raw.points(),
@@ -648,7 +759,7 @@ const augument = (db) => {
   augSeriesAndAvg('pScore-difference', (_0, _1, audit, { pScore, score }) =>
     map(pScore.points(), ([k, v]) => [k,
       v - score.points().get(k)]));
-  //
+
   // // Apply various sliding windows over the precise score, drop a variable
   // // number of to empirically
   // const windowSize = [2,3,4,5,10,20,50];
