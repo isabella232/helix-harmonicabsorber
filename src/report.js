@@ -12,7 +12,7 @@ import {
   each, mapSort, map, flat, first, uniq, keys, filter,
   enumerate, trySlidingWindow, append, list, reverse,
   empty, ifdef, cartesian, slidingWindow, typename, zip2,
-  range, second, take,
+  range, second, take, concat,
 } from 'ferrum';
 
 import ByteEfficiencyAudit from 'lighthouse/lighthouse-core/audits/byte-efficiency/byte-efficiency-audit.js';
@@ -477,6 +477,26 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
         }),
         flat)));
 
+    r.h2('Score Differentials');
+
+    each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) => {
+      const d1 = extractor(e1).raw.points(), d2 = extractor(e2).raw.points();
+      const diff = pipe(
+        // Set intersection and extract values on d1 & d2
+        map(d1, ([k, v1]) => [k, v1, d2.get(k)]),
+        filter(([_, v1, v2]) => isdef(v1) && isdef(v2)),
+        // Difference on those extracted values
+        map(([k, v1, v2]) => [k, v1.mul(-1).add(v2)]), // v2 - v1
+        list);
+      r.plot(`${n2} - ${n1} difference`, `diff/${e2.no}_sub_${e1.no}`,
+        linePlotWith({ ymarkings: [['zero', 0]] })([
+          [`${n2} - ${n1} lower`, Samples.new(dict(mapValue(diff, (p) => p.lower())))],
+          [`${n2} - ${n1} upper`, Samples.new(dict(mapValue(diff, (p) => p.upper())))],
+        ]));
+    });
+
+    r.h2('Absolute value comparisons');
+
     each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
       r.plot(`${n1} vs ${n2} sorted plot`, `comparison/sorted/${e1.no}_vs_${e2.no}`,
         linePlot([
@@ -739,7 +759,6 @@ const augument = (db) => {
       // Turn into a dictionary
       dict,
       SamplesWithConfidence.new,
-      apply1((x) => (console.log("megaten", exp.name, x), x)),
     )}));
 
   // Manually compute the score with arbitrary precision (precise score)

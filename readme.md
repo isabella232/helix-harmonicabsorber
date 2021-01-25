@@ -10,25 +10,28 @@
 
 # Next Steps
 
-0. Store all artifacts required for rerunning lighthouse
-1. Validate pScore on new run providing a rounded score (should see lower outlandishness, lower variance?)
-2. Perform estimations on raw distributions
-3. Provide our own scoring function for lighthouse scores which produce singularities: https://github.com/GoogleChrome/lighthouse/issues/11881, https://github.com/GoogleChrome/lighthouse/issues/11882, https://github.com/GoogleChrome/lighthouse/issues/11883
-4. Report average/medians of statistical indicators (e.g. outlandishness)
-5. Numerically estimate distributions for N values
-6. Mathematical error bar estimation
-
-median/mean, p95/p90/p80, 1/2/5/10/20/50 samples
-2, 5-0, 5-1, 5-2, 10-0, 10-1, 10-2, 20-0, 20-2, 20-4, 50-2, 50-5, 50-10
-
-## Maybe
-
-* Remove unneeded dependencies
-* Revisit outlier classification
-* Series should be point (not sequence) oriented
+* Determine method for variable sample size (just stopping once we have a
+  high confidence result seems flawed and might increase the amount of false positive results)
+* Collect scores of different setups during the same interval
+  to reduce the impact of performance fluctuations affecting the
+  machine
+* Use median instead of average of multiple scores (there may
+  be some way to use fractional medians instead of discrete ones
+  by calculating it based on the empirical distribution)
+* Provide our own scoring function for lighthouse scores which produce singularities: https://github.com/GoogleChrome/lighthouse/issues/11881, https://github.com/GoogleChrome/lighthouse/issues/11882, https://github.com/GoogleChrome/lighthouse/issues/11883
+* Multidimensional outlier rejection
+* Correlation matrix generation?
 * Gather only artifacts; lighthouse analysis in report step
-* Omit unneded autits (e.g. Audit.SCORING_MODES.NOT_APPLICABLE)
+* Empirically validate using p90 like we do for error estimations
+* Work out distribution for each separate score
+
+# Tech improvements
+
 * Reporting needs a proper data model
+* Omit unneded autits (e.g. Audit.SCORING_MODES.NOT_APPLICABLE)
+* Series should be point (not sequence) oriented
+* Remove unneeded dependencies
+* Store all artifacts required for rerunning lighthouse
 
 Experiment
   ExperimentGroup

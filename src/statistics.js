@@ -156,7 +156,9 @@ export class Samples {
   }
 
   percentile(p) {
-    return this.dropExtreme(floor(this.data().length * (1-p)));
+    const n = this.data().length;
+    const d = n === 0 ? 0 : min(n-1, floor(this.data().length * (1-p)));
+    return this.dropExtreme(d);
   }
 
   /// 90th percentile samples as another Samples type
