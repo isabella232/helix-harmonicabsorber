@@ -10,20 +10,31 @@
 
 # Next Steps
 
+## High Prio
+
+* Properly trim means (methodical approach as supported by literature instead of our ad-hoc solution)
 * Determine method for variable sample size (just stopping once we have a
   high confidence result seems flawed and might increase the amount of false positive results)
 * Collect scores of different setups during the same interval
   to reduce the impact of performance fluctuations affecting the
   machine
-* Use median instead of average of multiple scores (there may
-  be some way to use fractional medians instead of discrete ones
-  by calculating it based on the empirical distribution)
+* Estimate mean distribution instead of confidence interval; produce 3d graphs (color as third dimension). https://www.khanacademy.org/math/ap-statistics/random-variables-ap/combining-random-variables/a/combining-random-variables-article
+
+## Low Prio
+
 * Provide our own scoring function for lighthouse scores which produce singularities: https://github.com/GoogleChrome/lighthouse/issues/11881, https://github.com/GoogleChrome/lighthouse/issues/11882, https://github.com/GoogleChrome/lighthouse/issues/11883
 * Multidimensional outlier rejection
 * Correlation matrix generation?
 * Gather only artifacts; lighthouse analysis in report step
-* Empirically validate using p90 like we do for error estimations
-* Work out distribution for each separate score
+* Validate that our method can actually estimate distribution parameters with a high accuracy. Paper: "Parameter estimations from gaussian measurements: When and how to use dither."
+
+# Abandoned
+
+* Idea: Use median instead of average of multiple scores (there may
+  be some way to use fractional medians instead of discrete ones
+  by calculating it based on the empirical distribution)
+
+=> Nope, median cannot estimate discrete distributions very well. Just use (proper) trimmed means.
 
 # Tech improvements
 
