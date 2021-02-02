@@ -123,14 +123,16 @@ export class Samples {
     return this._uncacheNonempty('skewness', jstat.skewness);
   }
 
-  dropExtreme(toDrop) {
-    assert(toDrop <= this.data().length,
-      `Cannot drop ${toDrop} elements from list of ${this.data().length}`);
-    return this._uncache(`dropExteme-${toDrop}`, (d) => {
+  /** Trim N elements from each end of the distribution */
+  trim(n) {
+    const len = this.data().length;
+    assert(n*2 <= this.data().length,
+      `Cannot trim ${n}*2 elements from pupulation of size ${len}`);
+    return this._uncache(`trim-${n}`, () => {
       // Store the points in original order
       const m = this.mean();
       const pts = list(map(this.points(), ([x, y]) => ({
-        x, y, dev: abs(y-m),
+        x, y, dev: y-m,
       })));
 
       // Sort points by deviation on y axis in decreasing order.
@@ -142,28 +144,48 @@ export class Samples {
         each(([idx, rec]) =>
           assign(rec, { idx })));
 
-      // Filter out those entries whose rank is too. This way of
-      // gathering a percentile subpopulation is a bit complicated,
-      // but it has two advantages: (1) it preserves the original
-      // order of the points (2) it produces a result of the expected
-      // size even if the population is completely linear (e.g. all values=0)
+      // Filter out those entries whose rank is too. This method of
+      // trimming is a bit complicated, but it has two advantages:
+      // (1) it preserves the original order of the points
+      // (2) it produces a result of the expected size even if the population
+      // is completely linear (e.g. all values=0)
       return pipe(
-        filter(pts, ({idx}) => idx >= toDrop),
+        filter(pts, ({idx}) => n <= idx && idx < (len-n)),
         map(({ x, y }) => [x, y]),
         dict,
         type(this).new);
     });
   }
 
-  percentile(p) {
+  /**
+   * Drop the Nth percentile samples; this always trims the same
+   * number of elements from both ends and always favours dropping
+   * more elements in case of ambiguity unless this would empty out
+   * the sample.
+   *
+   * E.g. trimming 5%
+   *
+   * size    trimmed
+   * 0       0
+   * 1       0
+   * 2       0
+   * 3       2
+   * …       …
+   * 40      2
+   * 41      4
+   *
+   * TODO: Using a linearly weighted mean would result in a much smoother
+   * behaviour.
+   */
+  trimPercentile(p) {
     const n = this.data().length;
-    const d = n === 0 ? 0 : min(n-1, floor(this.data().length * (1-p)));
-    return this.dropExtreme(d);
+    const d = ceil(n*p/2);
+    return n-2*d <= 0 ? this : this.trim(d);
   }
 
   /// 90th percentile samples as another Samples type
   p90() {
-    return this.percentile(0.9);
+    return this.trimPercentile(0.05);
   }
 
   /// Half of the population that is <= mean
