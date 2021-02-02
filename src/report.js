@@ -89,7 +89,7 @@ const lhScoreFromRaw = curry('lhScoreFromRaw', (raw, audit) => {
 
   // https://github.com/GoogleChrome/lighthouse/issues/11883
   const isWasted = hasBase(a, ByteEfficiencyAudit)
-    || oneof(audit, ['uses-rel-preload', 'uses-rel-preconnect', 'render-blocking-resources', 'uses-http2']);
+    || oneof(audit, ['uses-rel-preload', 'uses-rel-preconnect', 'render-blocking-resources', 'uses-http2', 'preload-lcp-image']);
   if (isWasted)
     return ByteEfficiencyAudit.scoreForWastedMs(raw);
 
