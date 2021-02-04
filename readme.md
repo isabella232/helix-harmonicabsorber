@@ -22,6 +22,7 @@ onic Absorber
 
 ## Low Prio
 
+* Rename TolerantNumber -> Interval
 * Use proper standard deviation for trimmed mean
 * Consider using linearly (or otherwise) weighted means 10.1080/01621459.1967.10482914
 * Provide our own scoring function for lighthouse scores which produce singularities: https://github.com/GoogleChrome/lighthouse/issues/11881, https://github.com/GoogleChrome/lighthouse/issues/11882, https://github.com/GoogleChrome/lighthouse/issues/11883

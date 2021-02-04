@@ -3,7 +3,7 @@ import jstat from 'jstat';
 import {
   identity, type, isdef, dict, list, pairs, plus, pipe,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
-  enumerate, filter, range,
+  enumerate, filter, range, curry,
 } from 'ferrum';
 
 import { TolerantNumber } from './math.js';
@@ -12,7 +12,7 @@ import {
 } from './ferrumpp.js';
 
 const { assign } = Object;
-const { ceil, round, min, max, abs, floor, } = Math;
+const { ceil, round, min, max, abs, floor, sqrt, } = Math;
 
 /// Various statistical functions on a population of samples.
 export class Samples {
@@ -244,11 +244,13 @@ export class Samples {
     });
   }
 
-  /// Returns the confidence interval of the mean as a TolerantNumber
-  meanWithConfidence(alpha = 0.05) {
-    const [a, z] = jstat.normalci(
-      this.mean(), alpha, this.stdev(), this.data().length);
-    return TolerantNumber.fromInterval(a, z);
+  /**
+   * Returns the interval [µ-σ; µ+σ] of the mean distribution according to the central limit theorem.
+   */
+  meanDistribution() {
+    return this.data().length === 0 ? undefined : TolerantNumber.new(
+      this.mean(),
+      this.stdev() / sqrt(this.data().length));
   }
 
   /// Assemble a histogram
@@ -265,6 +267,7 @@ export class Samples {
   /// Return some key infos about this distribution
   /// (for presenting to a user)
   keyIndicators() {
+    const empty = this.data().length === 0;
     return {
       p90min: this.p90().minimum(),
       p90max: this.p90().maximum(),
@@ -276,10 +279,21 @@ export class Samples {
       p90eccentricity: this.p90().eccentricity(),
       p90discretization: this.p90().discretization(),
       outlandishness: this.outlandishness(),
-      confidence: this.meanWithConfidence().magnitude(),
-      p90confidence: this.p90().meanWithConfidence().magnitude(),
+      confidence: empty ? undefined : withConfidence(this.meanDistribution(), 0.05).magnitude(),
+      p90confidence: empty ? undefined : withConfidence(this.p90().meanDistribution(), 0.05).magnitude(),
     };
   }
 }
 
-
+/**
+ * Given a normal distribution represented as an Interval, calculate
+ * a confidence interval.
+ *
+ * On a more concrete level this allows calculating arbitrary percentile
+ * values for a normal distribution from the standard deviation.
+ */
+export const withConfidence = curry('withConfidence', (dist, alpha) => {
+  return TolerantNumber.new(
+    dist.mid(),
+    abs(jstat.normal.inv(alpha/2, 0, 1) * dist.tolerance()));
+});

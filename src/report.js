@@ -22,7 +22,7 @@ import {
   hasBase, apply1,
 } from './ferrumpp.js';
 import { asyncMaskErrors, debug, roundMillis, lazy } from './stuff.js';
-import { Samples } from './statistics.js';
+import { Samples, withConfidence } from './statistics.js';
 import { isReal, roundTo, weightedAverage, TolerantNumber } from './math.js';
 import { Markdown } from './txt.js';
 import { writeFile, sleep } from './asyncio.js';
@@ -325,14 +325,22 @@ const extractSeries = curry('extractSeries', (exp, name) => {
  * Samples class used to indicate that the samples include confidence intervals.
  * Stub, mostly.
  */
-class SamplesWithConfidence {
-  static new(...args) { return new SamplesWithConfidence(...args); }
+class IntervalSamples {
+  static new(...args) { return new IntervalSamples(...args); }
   constructor(v) { assign(this, { v }); }
   data() {
     return list(map(this.v, second));
   }
   points() {
     return this.v;
+  }
+
+  toConfidence(alpha = 0.05) {
+    return pipe(
+      this.points(),
+      mapValue(withConfidence(alpha)),
+      dict,
+      type(this).new);
   }
 }
 
@@ -417,11 +425,12 @@ export class Report extends Markdown {
 const reportSeriesWith = curry('reportSeries', (r, prefix, ser, opts) => {
   const { markings } = opts;
 
-  if (ser instanceof SamplesWithConfidence) {
+  if (ser instanceof IntervalSamples) {
+    const c95 = ser.toConfidence();
     r.plot(`${prefix}-values`, `${prefix}/values`,
       linePlotWith([
-        [`${prefix}-lower`, dict(mapValue(ser.points(), t => t.lower()))],
-        [`${prefix}-upper`, dict(mapValue(ser.points(), t => t.upper()))],
+        [`${prefix}-lower`, dict(mapValue(c95.points(), t => t.lower()))],
+        [`${prefix}-upper`, dict(mapValue(c95.points(), t => t.upper()))],
       ], { ymarkings: markings }));
     return;
   }
@@ -469,7 +478,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
     r.plot(`All estimates`, `comparison/all_estimates`,
       linePlot(pipe(
         map(db, ([name, e]) => {
-          const pts = extractor(e).raw.points();
+          const pts = extractor(e).raw.toConfidence().points();
           return [
             [`${name}-lower`, Samples.new(dict(mapValue(pts, (p) => p.lower())))],
             [`${name}-upper`, Samples.new(dict(mapValue(pts, (p) => p.lower())))],
@@ -487,7 +496,8 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
         filter(([_, v1, v2]) => isdef(v1) && isdef(v2)),
         // Difference on those extracted values
         map(([k, v1, v2]) => [k, v1.mul(-1).add(v2)]), // v2 - v1
-        list);
+        dict,
+        IntervalSamples.new).toConfidence().points();
       r.plot(`${n2} - ${n1} difference`, `diff/${e2.no}_sub_${e1.no}`,
         linePlotWith({ ymarkings: [['zero', 0]] })([
           [`${n2} - ${n1} lower`, Samples.new(dict(mapValue(diff, (p) => p.lower())))],
@@ -497,14 +507,17 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
 
     r.h2('Absolute value comparisons');
 
-    each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) =>
+    each(trySlidingWindow(db, 2), ([[n1, e1], [n2, e2]]) => {
+      const pts1 = extractor(e1).raw.toConfidence().points();
+      const pts2 = extractor(e2).raw.toConfidence().points();
       r.plot(`${n1} vs ${n2} sorted plot`, `comparison/sorted/${e1.no}_vs_${e2.no}`,
         linePlot([
-          [`${n1}-lower`, Samples.new(dict(mapValue(extractor(e1).raw.points(), (p) => p.lower())))],
-          [`${n1}-upper`, Samples.new(dict(mapValue(extractor(e1).raw.points(), (p) => p.upper())))],
-          [`${n2}-lower`, Samples.new(dict(mapValue(extractor(e2).raw.points(), (p) => p.lower())))],
-          [`${n2}-upper`, Samples.new(dict(mapValue(extractor(e2).raw.points(), (p) => p.upper())))],
-        ])));
+          [`${n1}-lower`, Samples.new(dict(mapValue(pts1, (p) => p.lower())))],
+          [`${n1}-upper`, Samples.new(dict(mapValue(pts1, (p) => p.upper())))],
+          [`${n2}-lower`, Samples.new(dict(mapValue(pts2, (p) => p.lower())))],
+          [`${n2}-upper`, Samples.new(dict(mapValue(pts2, (p) => p.upper())))],
+        ]));
+    });
 
     return;
   }
@@ -724,7 +737,7 @@ const augument = (db) => {
           take(idx+1),
           Samples.new,
           apply1((ser) => {
-            return [key, ser.p90().meanWithConfidence()];
+            return [key, ser.p90().meanDistribution()];
           }))),
       dict);
 
@@ -737,8 +750,8 @@ const augument = (db) => {
       dict);
 
     assign(meas, {
-      rawEstimate: SamplesWithConfidence.new(rawEstimate),
-      scoreEstimate: SamplesWithConfidence.new(scoreEstimate),
+      rawEstimate: IntervalSamples.new(rawEstimate),
+      scoreEstimate: IntervalSamples.new(scoreEstimate),
     });
   });
 
@@ -758,7 +771,7 @@ const augument = (db) => {
       mapValue(lhWeightedAverage),
       // Turn into a dictionary
       dict,
-      SamplesWithConfidence.new,
+      IntervalSamples.new,
     )}));
 
   // Manually compute the score with arbitrary precision (precise score)
