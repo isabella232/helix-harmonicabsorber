@@ -6,13 +6,31 @@ import process from 'process';
 import child_process from 'child_process';
 import { fileURLToPath } from 'url';
 import { resolve, dirname, basename } from 'path';
-import { typename, type, isdef, curry, map, concat } from 'ferrum';
+import { typename, type, isdef, curry, map, concat, range0 } from 'ferrum';
 import { create } from './ferrumpp.js';
 
 const { assign } = Object;
 const { mkdir } = fs.promises;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Start a coroutine
+ * (This is really just calling the function; but using this
+ * named function communicates your intent).
+ */
+export const forkCoro = (fn) => fn();
+
+/**
+ * Fork a coroutine for each element from the sequence
+ * and wait till they all exit.
+ */
+export const forkvCoro = (seq, fn) => Promise.all(map(seq, fn));
+
+/**
+ * Spawn n coroutines and wait till they all exit
+ */
+export const forknCoro = (no, fn) => Promise.all(map(range0(no), () => fn()));
 
 /// Base class for defining async classes.
 /// This disables the use of the constructor & implements the
@@ -36,6 +54,10 @@ export class AsyncCls {
 /// and a connect method that can resolve/reject from
 /// another promise or barrier.
 export class Barrier extends Promise {
+  static new(...args) {
+    return new this(...args);
+  }
+
   constructor(fn) {
     let props;
     super((_res, _rej) => {
@@ -89,8 +111,8 @@ export const isAccessible = async (path) => {
 /// * The process object itself can also directly be awaited and treated
 ///   as a promise.
 export const spawn = (cmd, ...args /* , opts = {} */) => {
-  const opts = type(args[args.length - 1]) === Object ? args.pop() : {};
-  const proc = child_process.spawn(cmd, args, {
+  const { _forking, ...opts } = type(args[args.length - 1]) === Object ? args.pop() : {};
+  const proc = child_process[_forking ? 'fork' : 'spawn'](cmd, args, {
     stdio: ['inherit', 'inherit', 'inherit'],
     ...opts,
   });
@@ -103,6 +125,16 @@ export const spawn = (cmd, ...args /* , opts = {} */) => {
   proc.then = function(...args) { return this._onExit.then(...args) };
   proc.finally = function(...args) { return this._onExit.finally(...args) };
   return proc;
+};
+
+/** Like spawn, but for the fork() method */
+export const fork = (...args) => {
+  const opts = type(args[args.length - 1]) === Object ? args.pop() : {};
+  return spawn(...args, {
+    ...opts,
+    stdio: undefined,
+    _forking: true,
+  });
 };
 
 /// Run a command with the node modules .bin directory in the path,
@@ -136,13 +168,8 @@ export const writeFile = async (path, cont) => {
 
 /// Generate a promise that will resolve as soon as an event is
 /// generated
-export const waitEvent = curry('waitEvent', (obj, ev) => new Promise((res) => {
-  const handler = (param) => {
-    obj.removeHandler(handler);
-    res(param);
-  };
-  obj.on(ev, handler);
-}));
+export const waitEvent = curry('waitEvent', (obj, ev) =>
+  new Promise((res) => obj.once(ev, res)));
 
 /// Like promise.race but allows for the promises to be tagged.
 /// Seq<[String, Promise<A>]> -> [String, A]
@@ -184,3 +211,47 @@ export const openReadStream = async (path, opts = {}) => {
     throw r;
   return stream;
 };
+
+/**
+ * First-come-first-serve first-in-first-out async message queue
+ *
+ * This can be used to turn many complex, async control flows into
+ * a much easier to grasp, async event loop; essentially implementing
+ * an actor model where async logic is modeled as a group of actors where
+ * there are multiple concurrent actors but each single actor is
+ * sequential in of itself.
+ */
+export class BufferedChannel {
+  static new() {
+    return new this();
+  }
+
+  constructor() {
+    assign(this, {
+      _buffer: [],
+      _consumers: [],
+    });
+  }
+
+  enqueue(ev) {
+    if (this._consumers.length > 0)
+      this._consumers.shift().resolve(ev);
+    else
+      this._buffer.push(ev);
+  }
+
+  tryDequeue(fallback = null) {
+    return this._buffer.length > 0
+      ? this._buffer.shift()
+      : fallback;
+  }
+
+  async dequeue() {
+    if (this._buffer.length > 0)
+      return this._buffer.shift();
+
+    const b = Barrier.new();
+    this._consumers.push(b);
+    return (await b); // do not return full barrier
+  }
+}

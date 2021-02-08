@@ -2,10 +2,11 @@
 /// ferrum js. Small, functional programming and closed (meaning
 /// decent api). I will probably port some of these to ferrumjs.
 
+import assert from 'assert';
 import {
   type, curry, pipe, iter, next, list, foldl, map, any, repeat,
   take, each, enumerate, filter, setdefault, contains, eq,
-  extend1, takeWhile, isdef, is,
+  extend1, takeWhile, isdef, is, sum, last, first,
 } from 'ferrum';
 
 const { assign } = Object;
@@ -153,3 +154,29 @@ export const hasBase = (t, base) =>
     contains(basetypes(t), is(base));
 
 export const apply1 = curry('apply1', (arg, fn) => fn(arg));
+
+/**
+ * Randomly select an element from a sequence with weights.
+ * The selector number must be a float in the range [0; 1[
+ *
+ * A: Number -> Sequence<[Number, A]>> -> A
+ */
+export const trySelectWithWeight = curry('trySelectWithWeight', (seq, fallback, selector) => {
+  assert(selector >= 0 && selector < 1);
+
+  const l = coerce_list(seq);
+  const total = sum(map(l, ([w, _]) => w));
+  const sel2 = selector * total;
+
+  if (total === 0)
+    return fallback;
+
+  let accu = 0;
+  for (const [w, e] of l) {
+    accu += w;
+    if (sel2 < accu)
+      return e;
+  }
+
+  assert(false, "Unreachable!");
+});

@@ -3,6 +3,7 @@ import hoxy from 'hoxy';
 import { createWriteStream } from 'fs';
 import { readFile } from 'fs/promises';
 import { each, concat } from 'ferrum';
+import { v4 as uuidgen } from 'uuid';
 import { rapply } from './ferrumpp.js';
 import { AsyncCls, openReadStream, writeFile } from './asyncio.js';
 import { cakey, cacert, tmpdir } from './settings.js';
@@ -15,13 +16,14 @@ export class Proxychrome extends AsyncCls {
   async _init(opts = {}) {
     let {
       port = 5050,
-      headless = true,
       key = cakey,
       cert = cacert,
+      proxychromeId = uuidgen(),
     } = opts;
 
     // Local variables
     assign(this, {
+      proxychromeId, port,
       onRequest: [], // Add request handlers here
       onResponse: [], // Add response handlers here
     });
@@ -31,16 +33,6 @@ export class Proxychrome extends AsyncCls {
     this.proxy = hoxy.createServer(proxyOpts).listen(port);
     this.proxy.intercept('request', (...args) => this._interceptReq(...args));
     this.proxy.intercept('response', (...args) => this._interceptResp(...args));
-
-    // Launch chrome
-    this.chrome = await chromeLauncher.launch({
-      chromeFlags: [
-        ...(headless ? ['--headless'] : []),
-        `--proxy-server=http://localhost:${port}`,
-        `--proxy-bypass-list=<-loopback>;<-local>`,
-        `--ignore-certificate-errors`,
-      ]
-    });
   }
 
   async _interceptReq(req, resp, cycle) {
@@ -52,6 +44,20 @@ export class Proxychrome extends AsyncCls {
     const handlers = concat(req.onResponse, this.onResponse);
     each(handlers, rapply([this, req, resp, cycle]));
   }
+
+
+    // Launch chrome
+  launchChrome(opts = {}) {
+    const { headless = true } = opts;
+    return chromeLauncher.launch({
+      chromeFlags: [
+        ...(headless ? ['--headless'] : []),
+        `--proxy-server=http://localhost:${this.port}`,
+        `--proxy-bypass-list=<-loopback>;<-local>`,
+        `--ignore-certificate-errors`,
+      ]
+    });
+  }
 }
 
 /// Intercept the hoxy "response" event for this request object
@@ -59,8 +65,11 @@ export class Proxychrome extends AsyncCls {
 export const waitResponse = (req) => new Promise(res => req.onResponse.push(res));
 
 /// Helper to cache the request and serve from disk
-export const cacheRequest = async (req, resp, opts) => {
-  const { cacheDir = `${tmpdir()}/cache/` } = opts;
+export const cacheRequest = async (proxychrome, req, resp, cycle, opts = {}) => {
+  const {
+    cacheDir = `${tmpdir()}/cache-${proxychrome.proxychromeId}`
+  } = opts;
+
   const key = `${req.method} ${req.fullUrl()}`;
   const file = `${cacheDir}/${base64(key)}`;
   const metaFile = `${file}.meta.json`;
