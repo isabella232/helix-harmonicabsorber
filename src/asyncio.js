@@ -169,7 +169,7 @@ export const writeFile = async (path, cont) => {
 /// Generate a promise that will resolve as soon as an event is
 /// generated
 export const waitEvent = curry('waitEvent', (obj, ev) =>
-  new Promise((res) => obj.once(ev, res)));
+  new Promise((res) => obj.once(ev, (p) => res(p))));
 
 /// Like promise.race but allows for the promises to be tagged.
 /// Seq<[String, Promise<A>]> -> [String, A]
@@ -206,7 +206,20 @@ export const catchingAsync = (p) =>
 /// of using the open & error events
 export const openReadStream = async (path, opts = {}) => {
   const stream = fs.createReadStream(path, opts);
-  const [ev, r] = waitAnyEvent(stream, ['open', 'error']);
+  const [ev, r] = await waitAnyEvent(stream, ['open', 'error']);
+  if (ev === 'error')
+    throw r;
+  return stream;
+};
+
+/// Like createWriteStream but will reject the promise instead
+/// of using the open & error events.
+/// Also makes sure the directory for the file is created.
+export const openWriteStream = async (path, opts = {}) => {
+  const [dir, _] = dirfile(path);
+  await mkdir(dir, { recursive: true });
+  const stream = fs.createWriteStream(path, opts);
+  const [ev, r] = await waitAnyEvent(stream, ['open', 'error']);
   if (ev === 'error')
     throw r;
   return stream;

@@ -1,13 +1,12 @@
 import chromeLauncher from 'chrome-launcher';
 import hoxy from 'hoxy';
-import { createWriteStream } from 'fs';
 import { readFile } from 'fs/promises';
-import { each, concat } from 'ferrum';
 import { v4 as uuidgen } from 'uuid';
+import { each, concat, exec } from 'ferrum';
 import { rapply } from './ferrumpp.js';
-import { AsyncCls, openReadStream, writeFile } from './asyncio.js';
+import { AsyncCls, openReadStream, writeFile, openWriteStream } from './asyncio.js';
 import { cakey, cacert, tmpdir } from './settings.js';
-import { base64, debug } from './stuff.js';
+import { debug, sha256 } from './stuff.js';
 
 const { assign } = Object;
 
@@ -31,18 +30,19 @@ export class Proxychrome extends AsyncCls {
     // Load data
     const proxyOpts = { certAuthority: { key, cert } };
     this.proxy = hoxy.createServer(proxyOpts).listen(port);
-    this.proxy.intercept('request', (...args) => this._interceptReq(...args));
-    this.proxy.intercept('response', (...args) => this._interceptResp(...args));
+    this.proxy.intercept('request', async (...args) => await this._interceptReq(...args));
+    this.proxy.intercept('response', async (...args) => await this._interceptResp(...args));
   }
 
   async _interceptReq(req, resp, cycle) {
     req.onResponse = [];
-    each(this.onRequest, rapply([this, req, resp, cycle]));
+    for (const fn of this.onRequest)
+      await fn(this, req, resp, cycle);
   }
 
   async _interceptResp(req, resp, cycle) {
-    const handlers = concat(req.onResponse, this.onResponse);
-    each(handlers, rapply([this, req, resp, cycle]));
+    for (const fn of concat(req.onResponse, this.onResponse))
+      await fn(this, req, resp, cycle);
   }
 
 
@@ -60,10 +60,6 @@ export class Proxychrome extends AsyncCls {
   }
 }
 
-/// Intercept the hoxy "response" event for this request object
-/// HoxyRequest => Promise
-export const waitResponse = (req) => new Promise(res => req.onResponse.push(res));
-
 /// Helper to cache the request and serve from disk
 export const cacheRequest = async (proxychrome, req, resp, cycle, opts = {}) => {
   const {
@@ -71,8 +67,9 @@ export const cacheRequest = async (proxychrome, req, resp, cycle, opts = {}) => 
   } = opts;
 
   const key = `${req.method} ${req.fullUrl()}`;
-  const file = `${cacheDir}/${base64(key)}`;
+  const file = `${cacheDir}/${sha256(key)}`;
   const metaFile = `${file}.meta.json`;
+  console.log("CACHE", { key, file, metaFile })
 
   try {
     const meta = JSON.parse(await readFile(metaFile, 'utf8'));
@@ -91,11 +88,12 @@ export const cacheRequest = async (proxychrome, req, resp, cycle, opts = {}) => 
     }
   }
 
-  debug("CACHE MISS", req.key);
-  await waitResponse(req);
-  await writeFile(metaFile, JSON.stringify({ // & create dir
-      headers: resp.headers,
-      statusCode: resp.statusCode,
-  }));
-  resp.tee(createWriteStream(file));
+  debug("CACHE MISS", key);
+  req.onResponse.push(async () => { // fork
+    resp.tee(await openWriteStream(file));
+    await writeFile(metaFile, JSON.stringify({ // & create dir
+        headers: resp.headers,
+        statusCode: resp.statusCode,
+    }));
+  });
 };

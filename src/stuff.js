@@ -1,5 +1,6 @@
 /// Everything else & low quality code
 import { Buffer } from 'buffer';
+import crypto from 'crypto';
 import {
   obj, list, type, pairs,
   map, flat,
@@ -64,3 +65,6 @@ export const lazy = (fn) => {
     return cache;
   };
 };
+
+export const sha256 = (data) =>
+  new crypto.Hash("sha256").update(data).digest("hex");

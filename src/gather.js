@@ -3,7 +3,6 @@ import process from 'process';
 import child_process from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { isdef, curry, enumerate, pipe, map, dict, eq } from 'ferrum';
 import { v4 as uuidgen } from 'uuid';
 import { debug } from './stuff.js';
 import { Proxychrome, cacheRequest } from './proxychrome.js';
@@ -11,6 +10,10 @@ import { procTimeStr, tmpdir } from './settings.js';
 import { BufferedChannel, fork, forknCoro, sleep } from './asyncio.js';
 import { trySelectWithWeight } from './ferrumpp.js';
 import { minimum } from './math.js';
+import {
+  isdef, curry, enumerate, pipe, map, dict, eq, range0,
+  contains, is
+} from 'ferrum';
 
 const { assign } = Object;
 const { random } = Math;
@@ -22,27 +25,21 @@ const __dirname = dirname(__filename);
 
 const JUMP = Symbol("JUMP");
 
-const cache = ({ proxychrome, req, res, cycle, ...opts }) =>
-  cacheRequest(proxychrome, req, res, cycle, ...opts);
+const cache = async ({ proxychrome, req, res, cycle, ...opts }) =>
+  await cacheRequest(proxychrome, req, res, cycle, opts);
 
-const block = ({ req, res, because }) => {
+const block = async ({ req, res, because }) => {
   debug('Blocking', req.fullUrl(),
     ...(isdef(because) ? ['because', because] : []));
   assign(res, { statusCode: 200, content: "" })
   throw JUMP;
 };
 
-const blockSuffix = curry('blockSuffix', (opts, suffix) => {
+const blockSuffix = curry('blockSuffix', async (opts, suffix) => {
   const usuf = new URL(opts.req.fullUrl()).pathname.replace(/^.*\./, '');
   if (usuf === suffix)
-    block({ because: `Suffix:${suffix}`, ...opts });
+    await block({ because: `Suffix:${suffix}`, ...opts });
 });
-
-const blockExternal = (opts) => {
-  const u1 = new URL(opts.req.fullUrl()), u2 = new URL(opts.url);
-  if (u1.host !== u2.host)
-    block({ because: `External resource`, ...opts });
-};
 
 // Experiments --------------------------
 
@@ -51,33 +48,40 @@ const pagesUrl = 'https://pages.adobe.com/illustrator/en/tl/thr-layout-home/';
 const deriveExp = (name, base, intercept) => ({
   ...base,
   name: `${base.name}+${name}`,
-  intercept(opts) {
+  async intercept(opts) {
     if (isdef(intercept))
-      intercept(opts);
+      await intercept(opts);
     if (isdef(base.intercept))
-      base.intercept(opts);
+      await base.intercept(opts);
   }
 });
 
 const expPages = { name: 'pages', url: pagesUrl };
 const expCached = deriveExp('cached', expPages, cache);
-const expNoexternal = deriveExp('noexternal', expCached, blockExternal);
-const expNomedia = deriveExp('nomedia', expNoexternal, (opts) => {
-  blockSuffix(opts, 'svg');
-  blockSuffix(opts, 'jpg');
-  blockSuffix(opts, 'jpeg');
-  blockSuffix(opts, 'png');
+const expNoadtech = deriveExp('noadtech', expCached, async (opts) => {
+  const re = /adobe-privacy\/latest\/privacy.min|marketingtech|demdex.net|cookielaw.org|geolocation.onetrust.com/;
+  if (opts.req.fullUrl().match(re))
+    await block({ because: `Adtech`, ...opts });
+});
+const expNomedia = deriveExp('nomedia', expNoadtech, async (opts) => {
+  await blockSuffix(opts, 'svg');
+  await blockSuffix(opts, 'jpg');
+  await blockSuffix(opts, 'jpeg');
+  await blockSuffix(opts, 'png');
 });
 const expNocss = deriveExp('nocss', expNomedia, blockSuffix('css'));
 const expNojs = deriveExp('nojs', expNocss, blockSuffix('js'));
+const expBlockAll = deriveExp('baseline', expCached, async (opts) =>
+  await block({ ...opts, reason: 'Baseline test' }));
 
 const experiments = [
-  expPages, expCached, expNoexternal,
-  expNomedia, expNocss, expNojs
+  expPages, expCached, expNoadtech,
+  expNomedia, expNocss, expNojs,
+  expBlockAll
 ];
 
 export const gather = async () => {
-  const maxWorkers = 3;
+  const maxWorkers = 4;
   const dir = `harmonicabsorber_${procTimeStr}`;
 
   const exps2 = pipe(
@@ -88,12 +92,12 @@ export const gather = async () => {
     dict);
 
   const proxychrome = await Proxychrome.new();
-  proxychrome.onResponse.push((_, req, res, cycle) => {
+  proxychrome.onRequest.push(async (_, req, res, cycle) => {
     // We use the header to determine which experimental setup
     // is to be used
     const expName = req.headers['x-harmonicobserver-experiment'];
     const exp = exps2.get(expName);
-    console.log("EXPERIMENT ", expName);
+    console.log("EXPERIMENT ", expName, " – ", exp, " – ", !isdef(exp));
     if (!isdef(exp))
       return;
 
@@ -102,10 +106,13 @@ export const gather = async () => {
 
     // Make that entire throw JUMP feature work
     try {
-      exp.intercept({ proxychrome, req, res, cycle, cacheDir });
+      if (isdef(exp.intercept))
+        await exp.intercept({ proxychrome, req, res, cycle, cacheDir });
     } catch (e) {
-      if (e !== JUMP)
-        throw e;
+      if (e !== JUMP) {
+        debug("ERROR while processing request", e);
+        process.exit(1)
+      }
     }
   });
 
