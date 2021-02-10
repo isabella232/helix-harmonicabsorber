@@ -42,6 +42,7 @@ onic Absorber
 * Display different confidence levels in scoreEstimation using coloring
 * Validate our sampling methods with monte carlo simulations
   - Validate that our method can actually estimate distribution parameters with a high accuracy. Paper: "Parameter estimations from gaussian measurements: When and how to use dither."
+* Use calibration lighthouse runs as suggested in [report 16](./report_00016_2021-02-10T13-31-48.338Z).
 
 # Tech improvements
 
