@@ -270,6 +270,7 @@ export const lineWith = curry('lineWith', (plots_, opts) => {
   const {
     style = 'line',
     keyopts = 'outside below',
+    logx, logy,
     xmarkings, ymarkings,
   } = opts;
 
@@ -278,18 +279,28 @@ export const lineWith = curry('lineWith', (plots_, opts) => {
     return Gnuplot.new();
 
   const off = max(meta.range() * 0.02, 1e-3);
-  const ymin = meta.minimum()-off;
-  const ymax = meta.maximum()+off;
   const height = 480 + plots.size*20;
   const xoff = xmeta.range() === 0 ? 0.01 : 0;
   const src = Gnuplot.new({ height }).datatables(plots);
 
+  const {
+    xmin = xmeta.minimum()-xoff,
+    xmax = xmeta.maximum()+xoff,
+    ymin = meta.minimum()-off,
+    ymax = meta.maximum()+off,
+  } = opts;
+
   src.settings.writeln(M(`
     set key ${keyopts}
-    set xrange [${xmeta.minimum()-xoff}:${xmeta.maximum()+xoff}]
+    set xrange [${xmin}:${xmax}]
     set yrange [${ymin}:${ymax}]
     set trange [${ymin}:${ymax}]
   `));
+
+  if (logx)
+    src.settings.writeln(`set logscale x ${logx}`);
+  if (logy)
+    src.settings.writeln(`set logscale y ${logy}`);
 
   each(plots, ([name, _]) =>
     src.plots.writeln(

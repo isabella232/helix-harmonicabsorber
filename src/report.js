@@ -431,7 +431,7 @@ const reportSeriesWith = curry('reportSeries', (r, prefix, ser, opts) => {
       linePlotWith([
         [`${prefix}-lower`, dict(mapValue(c95.points(), t => t.lower()))],
         [`${prefix}-upper`, dict(mapValue(c95.points(), t => t.upper()))],
-      ], { ymarkings: markings }));
+      ], { ymarkings: markings, logx: 2, xmin: 1 }));
     return;
   }
 
@@ -476,7 +476,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
     r.h2('Comparison');
 
     r.plot(`All estimates`, `comparison/all_estimates`,
-      linePlot(pipe(
+      linePlotWith({ logx: 2, xmin: 1 })(pipe(
         map(db, ([name, e]) => {
           const pts = extractor(e).raw.toConfidence().points();
           return [
@@ -499,7 +499,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
         dict,
         IntervalSamples.new).toConfidence().points();
       r.plot(`${n2} - ${n1} difference`, `diff/${e2.no}_sub_${e1.no}`,
-        linePlotWith({ ymarkings: [['zero', 0]] })([
+        linePlotWith({ ymarkings: [['zero', 0]], xmin: 1, logx: 2 })([
           [`${n2} - ${n1} lower`, Samples.new(dict(mapValue(diff, (p) => p.lower())))],
           [`${n2} - ${n1} upper`, Samples.new(dict(mapValue(diff, (p) => p.upper())))],
         ]));
@@ -511,7 +511,7 @@ const reportMetricProgression = curry('reportMetricProgression', (r, db, name, e
       const pts1 = extractor(e1).raw.toConfidence().points();
       const pts2 = extractor(e2).raw.toConfidence().points();
       r.plot(`${n1} vs ${n2} sorted plot`, `comparison/sorted/${e1.no}_vs_${e2.no}`,
-        linePlot([
+        linePlotWith({ logx: 2, xmin: 1 })([
           [`${n1}-lower`, Samples.new(dict(mapValue(pts1, (p) => p.lower())))],
           [`${n1}-upper`, Samples.new(dict(mapValue(pts1, (p) => p.upper())))],
           [`${n2}-lower`, Samples.new(dict(mapValue(pts2, (p) => p.lower())))],
