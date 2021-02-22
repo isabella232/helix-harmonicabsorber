@@ -3,16 +3,40 @@ import jstat from 'jstat';
 import {
   identity, type, isdef, dict, list, pairs, plus, pipe,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
-  enumerate, filter, range, curry,
+  enumerate, filter, range, curry, range0, foldl, size, extend, nth, exec,
+  mul, cartesian2, zip2, ifdef,
 } from 'ferrum';
 
-import { TolerantNumber } from './math.js';
+import { TolerantNumber, weightedAverage } from './math.js';
 import {
-  createFrom, coerce_list, parallel_foldl1, is_a,
+  createFrom, coerce_list, parallel_foldl1, is_a, fnpow,
 } from './ferrumpp.js';
+import { debug_seq } from './stuff.js';
 
 const { assign } = Object;
 const { ceil, round, min, max, abs, floor, sqrt, } = Math;
+
+/** Naive median implementation */
+export const median = (seq) => jstat.median(list(seq));
+
+/**
+ * This is the first derivative of the smoothly derivable huber
+ * loss approximation suggested by wikipedia.
+ */
+const smoothHuberLossPsi = (x, k) => x/sqrt(x**2/k**2 + 1);
+/**
+ * This is δ-|ψ| where δ is the desired cutoff derived from
+ * the percentile and ψ is the first derivative of the
+ * pseudo huber loss function
+ * https://www.desmos.com/calculator/nv9iwh9bwl
+ */
+const smoothHuberLossWeight = (x, k) => k - abs(smoothHuberLossPsi(x, k));
+
+/**
+ * Mean Absolute Deviation -> Standard deviation
+ * https://en.wikipedia.org/wiki/Average_absolute_deviation
+ */
+const meanAD2Stdev = 1/0.79788456;
 
 /// Various statistical functions on a population of samples.
 export class Samples {
@@ -107,6 +131,96 @@ export class Samples {
     return this._stats().mean;
   }
 
+  /**
+   * Perform L estimation using the smooth Huber loss weight function
+   * on the standard deviation and the mean.
+   * https://en.wikipedia.org/wiki/Mean_absolute_difference
+   */
+  fitLSHL(alpha = 0.05) {
+    return this._uncacheNonempty(`fitL_SHL_${alpha}`, (_) => {
+      if (size(this.quanta()) === 1)
+        return TolerantNumber.new(this.mean(), 0);
+
+      const dat = this.sorted(), len = size(dat);
+      const orderFrac = (i) => abs((i-(len-1)/2)*2/(len-1));
+      const weights = list(map(range0(len), (i) =>
+        smoothHuberLossWeight(orderFrac(i), 1-alpha*2)));
+
+      const center = weightedAverage(zip2(dat, weights));
+      const scale =  weightedAverage(zip2(
+        map(dat, (x) => abs(x-center)), weights));
+
+      return TolerantNumber.new(center, scale*meanAD2Stdev);
+    });
+  }
+
+  // This applies an m estimator based on the huber loss function.
+  //
+  // This should be asymptotically equivalent to windsorization at the
+  // α percentile, where is a parameter in [0; 1] indicating the percentile.
+  //
+  // Returns a tolerant number with the standard deviation of the estimate;
+  // this can be used to derive any percentile value to get some user defined
+  // confidence interval
+  //
+  // https://en.wikipedia.org/wiki/Huber_loss#Pseudo-Huber_loss_function
+  // https://doi.org/10.1214%2Faoms%2F1177703732
+  fitMSHL(alpha = 0.05, iterations = 15) {
+    return this._uncacheNonempty(`huber_loss_${alpha}_${iterations}`, (d) => {
+      if (empty(d))
+        return undefined;
+
+      // This improves upon out guess of the estimator by
+      // performing the weighted average again again and again
+      // using the previous guess as the center point.
+      // The weights are derived from the value of the sample point
+      // and the currently assumed distribution instead of the
+      // order statistic (this is what differentiates l and m estimators).
+      // We should iterate this until it converges
+      // (until a fix point is reached).
+      // Some heuristic would be nice in math.js that takes some
+      // measure of the rate of decent into the fix point to decide
+      // whether we should continue…
+      // We use the l estimation as the starting point:
+
+      const [c0, s0] = this.fitLSHL(alpha).both();
+      const guess = { c: c0, s: s0 };
+      const { c, s } = fnpow(guess, guess, ({c, s}) => {
+        // Just one element in the sample? Or all the same value?
+        // Or close to?
+        if (s < 1e-12)
+          return {c, s};
+        const cutoff = stdev2confidence(s, alpha*2);
+        const weights = list(map(d, (x) =>
+          smoothHuberLossWeight(x - c, cutoff)));
+        const cn = weightedAverage(zip2(d, weights));
+        const sn =  weightedAverage(zip2(
+          map(d, (x) => abs(x-c)), weights));
+        return { c: cn, s: sn };
+      });
+
+      return TolerantNumber.new(c, s*meanAD2Stdev);
+    });
+  }
+
+  /**
+   * Like fitMSHL, but returns the confidence interval of the
+   * center estimation instead of the scale estimation from the
+   * original data.
+   */
+  fitMSHLCenter(alpha = 0.05, iterations = 15) {
+    return ifdef(this.fitMSHL(alpha, iterations), (theta) => {
+      const [center, scale] = theta.both();
+      // Shamelessly using the central limit theorem for the mean…
+      // This is not proper; should look up how to do it for the huber
+      // loss function. This will likely be some interpolation between
+      // the central limit for the median based on the k value…
+      // Or maybe with a bit higher efficiency than either? Unclear.
+      const confidence = scale / sqrt(size(this.data()));
+      return TolerantNumber.new(center, confidence);
+    });
+  }
+
   median() {
     return this._uncacheNonempty('median', jstat.median);
   }
@@ -117,6 +231,22 @@ export class Samples {
 
   stdev() {
     return this._uncacheNonempty('stdev', jstat.stdev);
+  }
+
+  // Median average deviation
+  mad() {
+    return this._uncacheNonempty('mad', (d) =>
+      median(map(d, x => abs(x - this.median()))));
+  }
+
+  // https://doi.org/10.2307%2F2291267
+  stdevBySn() {
+    // in O(n^2); which is slow, but easy to implement
+    const cf = 1.1926; // correction factor
+    return this._uncacheNonempty('stdevBySn', (d) =>
+      cf * median(map(d, (xi) =>
+        median(map(d, (xk) =>
+          abs(xi-xk))))));
   }
 
   skewness() {
@@ -267,23 +397,33 @@ export class Samples {
   /// Return some key infos about this distribution
   /// (for presenting to a user)
   keyIndicators() {
-    const empty = this.data().length === 0;
+    const lfit = this.fitLSHL();
+    const mfit = this.fitMSHL();
+    const mfitCenter= this.fitMSHLCenter();
     return {
       p90min: this.p90().minimum(),
       p90max: this.p90().maximum(),
       p90range: this.p90().range(),
       p90mean: this.p90().mean(),
-      p90median: this.p90().median(),
+      median: this.median(),
       p90stdev: this.p90().stdev(),
+      mad: this.mad(),
+      stdevBySn: this.stdevBySn(),
+      lfitCenter: ifdef(lfit, v => v.mid()),
+      lfitStdev: ifdef(lfit, v => v.tolerance()),
+      mfitCenter: ifdef(mfit, v => v.mid()),
+      mfitStdev: ifdef(mfit, v => v.tolerance()),
+      mfitConfidence: ifdef(mfitCenter, v => v.tolerance()),
       p90skewness: this.p90().skewness(),
       p90eccentricity: this.p90().eccentricity(),
       p90discretization: this.p90().discretization(),
       outlandishness: this.outlandishness(),
-      confidence: empty ? undefined : withConfidence(this.meanDistribution(), 0.05).magnitude(),
-      p90confidence: empty ? undefined : withConfidence(this.p90().meanDistribution(), 0.05).magnitude(),
     };
   }
 }
+
+export const stdev2confidence = curry('stdev2confidence', (dev, alpha) =>
+  abs(jstat.normal.inv(alpha/2, 0, 1) * dev));
 
 /**
  * Given a normal distribution represented as an Interval, calculate
@@ -295,5 +435,5 @@ export class Samples {
 export const withConfidence = curry('withConfidence', (dist, alpha) => {
   return TolerantNumber.new(
     dist.mid(),
-    abs(jstat.normal.inv(alpha/2, 0, 1) * dist.tolerance()));
+    stdev2confidence(dist.tolerance(), alpha));
 });

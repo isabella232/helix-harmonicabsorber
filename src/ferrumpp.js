@@ -6,7 +6,7 @@ import assert from 'assert';
 import {
   type, curry, pipe, iter, next, list, foldl, map, any, repeat,
   take, each, enumerate, filter, setdefault, contains, eq,
-  extend1, takeWhile, isdef, is, sum, last, first,
+  extend1, takeWhile, isdef, is, sum, extend, nth,
 } from 'ferrum';
 
 const { assign } = Object;
@@ -180,3 +180,7 @@ export const trySelectWithWeight = curry('trySelectWithWeight', (seq, fallback, 
 
   assert(false, "Unreachable!");
 });
+
+/** Repeatedly apply a function */
+export const fnpow = curry('fnpow', (initial, count, fn) =>
+  nth(extend(initial, fn), count));

@@ -737,7 +737,7 @@ const augument = (db) => {
           take(idx+1),
           Samples.new,
           apply1((ser) => {
-            return [key, ser.p90().meanDistribution()];
+            return [key, ser.fitMSHLCenter()];
           }))),
       dict);
 

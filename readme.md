@@ -19,6 +19,11 @@ onic Absorber
 [Report 17](./report_00017_2021-02-10T15-08-03.406Z)  
 [Report 18](./report_00018_2021-02-10T15-25-16.877Z)  
 [Report 19](./report_00019_2021-02-10T18-14-37.922Z)  
+[Report 20](./report_00020_2021-02-19T21:17:38.612Z)  
+[Report 21](./report_00021_2021-02-20T09:16:39.615Z)  
+[Report 22](./report_00022_2021-02-20T12:08:46.964Z)  
+[Report 24](./report_00023_2021-02-20T12:14:57.249Z)  
+
 
 # Next Steps
 
@@ -26,7 +31,6 @@ onic Absorber
 
 * Determine method for variable sample size (just stopping once we have a
   high confidence result seems flawed and might increase the amount of false positive results)
-* Using linearly (or otherwise) weighted means instead of the hard cutoff we use now: This should reduce in smoother score progressions
 * Account for nonlinearity in the mapping from raw measurement to scoring interval using log normal distribution
   - Assuming the two experiments we are comparing have a underlying score of $µ_1=0.8, µ_2=0.9$ for example
   - And the environment decreases the score of $µ_2$ to $off(µ_2)=0.85
@@ -39,6 +43,17 @@ onic Absorber
 
 ## Low Impact/Difficulty
 
+* Perform literature study aiming at improving the way we derive confidence intervals for our m-estimation of center and scale;
+  is there any literature providing info? Our current method is just taking the standard deviation produced by the regression
+  and dividing that by the root of the number of samples. This is analogous to how we would do it with the mean; is this acceptable?
+* Can we use bootstrapping or a similar numeric method to derive a confidence interval?
+* Our current method of using m estimation to derive scale in addition to standard deviation is an ad-hoc construction. As is our use of an l-estimator as a starting point.
+  These are probably al-right, but are there any treatments of such constructions in the literature? We probably should perform monte-carlo simulations to support our use of these.
+* Our l and m estimators do not calculate mean squared errors, they calculate mean absolute distances on top of using the huber loss function as a weight. On top of
+  deriving a standard deviation from mse is non-trivial because the correction factor is distribution dependant. This construction is not
+  specifically supported by our currently available literature. We should probably at least use monte carlo simulations to derive a correction factor
+  specific to our use. Maybe we can find a better way (e.g. bootstrapping) to derive a confidence interval, sidestepping this entire problem.
+  Maybe we can derive some worst case estimate of the correction factor rigorously and use that?
 * Model TolerantNumber using proper and comprehensive Interval arithmatic
 * Provide our own scoring function for lighthouse scores which produce singularities: https://github.com/GoogleChrome/lighthouse/issues/11881, https://github.com/GoogleChrome/lighthouse/issues/11882, https://github.com/GoogleChrome/lighthouse/issues/11883
 * Multidimensional outlier rejection
@@ -57,3 +72,5 @@ onic Absorber
 * Series should be able to deal with intervals
 * Remove unneeded dependencies
 * Store all artifacts required for rerunning lighthouse
+* Efficiency improvements!
+* Model statistical functions as functions; The caching layer should be optional
