@@ -8,7 +8,6 @@ import {
 import { throws } from './ferrumpp.js';
 
 const { round } = Math;
-const { assign } = Object;
 
 /// For debug output
 export const debug = (...args) => console.error(...args);

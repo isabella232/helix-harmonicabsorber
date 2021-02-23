@@ -3,18 +3,16 @@ import jstat from 'jstat';
 import {
   identity, type, isdef, dict, list, pairs, plus, pipe,
   mapSort, sum, empty, each, map, uniq, deepclone, Deepclone,
-  enumerate, filter, range, curry, range0, foldl, size, extend, nth, exec,
-  mul, cartesian2, zip2, ifdef,
+  enumerate, filter, curry, range0, size, zip2, ifdef,
 } from 'ferrum';
 
 import { TolerantNumber, weightedAverage } from './math.js';
 import {
   createFrom, coerce_list, parallel_foldl1, is_a, fnpow,
 } from './ferrumpp.js';
-import { debug_seq } from './stuff.js';
 
 const { assign } = Object;
-const { ceil, round, min, max, abs, floor, sqrt, } = Math;
+const { ceil, round, min, max, abs, sqrt, } = Math;
 
 /** Naive median implementation */
 export const median = (seq) => jstat.median(list(seq));

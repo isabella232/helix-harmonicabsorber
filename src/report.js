@@ -1,5 +1,4 @@
 import assert from 'assert';
-import { inspect } from 'util';
 import { resolve, relative, basename } from 'path';
 import { readdir, readFile } from 'fs/promises';
 import lodash from 'lodash';
@@ -11,14 +10,13 @@ import {
   isdef, setdefault, obj, identity, dict, pipe, type, curry,
   each, mapSort, map, flat, first, uniq, keys, filter,
   enumerate, trySlidingWindow, append, list, reverse,
-  empty, ifdef, cartesian, slidingWindow, typename, zip2,
-  range, second, take, concat,
+  empty, ifdef, second, take,
 } from 'ferrum';
 
 import ByteEfficiencyAudit from 'lighthouse/lighthouse-core/audits/byte-efficiency/byte-efficiency-audit.js';
 
 import {
-  mapValue, nop, empty_seq, oneof, is_a, coerce_list, filterValue,
+  mapValue, nop, empty_seq, oneof, is_a, filterValue,
   hasBase, apply1,
 } from './ferrumpp.js';
 import { asyncMaskErrors, debug, roundMillis, lazy } from './stuff.js';
@@ -34,7 +32,6 @@ import {
 } from './plot.js';
 
 const { assign } = Object;
-const { floor } = Math;
 const { startCase } = lodash;
 
 /** Lighthouse config used to generate the report */

@@ -1,6 +1,5 @@
 import assert from 'assert';
 import process from 'process';
-import child_process from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { v4 as uuidgen } from 'uuid';
@@ -11,8 +10,7 @@ import { BufferedChannel, fork, forknCoro, sleep } from './asyncio.js';
 import { trySelectWithWeight } from './ferrumpp.js';
 import { minimum } from './math.js';
 import {
-  isdef, curry, enumerate, pipe, map, dict, eq, range0,
-  contains, is
+  isdef, curry, enumerate, pipe, map, dict, eq,
 } from 'ferrum';
 
 const { assign } = Object;

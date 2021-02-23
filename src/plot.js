@@ -8,10 +8,10 @@ import {
   type, Deepclone, obj, deepclone, join, filter, isdef,
 } from 'ferrum';
 import { mapValue, is_a, createFrom, nop } from './ferrumpp.js';
-import { Barrier, sleep, spawn, writeFile } from './asyncio.js';
+import { Barrier, spawn, writeFile } from './asyncio.js';
 import { Samples } from './statistics.js';
 import { clamp, maximum } from './math.js';
-import { catchall, debug } from './stuff.js';
+import { debug } from './stuff.js';
 import { Txt } from './txt.js';
 
 const { assign } = Object;
@@ -254,7 +254,7 @@ const parse = (plots_) => {
 const addmarkings = (src, opts = {}) => {
   const { xmarkings = [], ymarkings = [] } = opts;
 
-  each(enumerate(ymarkings), ([idx, [name, no]]) =>
+  each(enumerate(ymarkings), ([_idx, [name, no]]) =>
     src.plots.writeln(`${no} title ${strlit(name)}`));
 
   each(enumerate(xmarkings), ([idx, [name, no]]) => {
@@ -322,7 +322,7 @@ export const histogramWith = curry('histogramWith', (plots_, opts) => {
     xmarkings, ymarkings,
   } = opts;
 
-  const { plots, meta, xmeta } = parse(plots_);
+  const { plots, meta } = parse(plots_);
   if (meta.data().length === 0)
     return Gnuplot.new();
 
