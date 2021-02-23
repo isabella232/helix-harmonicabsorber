@@ -23,6 +23,8 @@ onic Absorber
 [Report 21](./report_00021_2021-02-20T09:16:39.615Z)  
 [Report 22](./report_00022_2021-02-20T12:08:46.964Z)  
 [Report 24](./report_00023_2021-02-20T12:14:57.249Z)  
+[Report 25](./report_00025_2021-02-22T21:38:55.199Z)  
+[Report 26](./report_00026_2021-02-22T21:38:55.199Z)  
 
 
 # Next Steps
@@ -39,6 +41,19 @@ onic Absorber
   - Thus we will measure a *greater* effect than is really present: $|µ_2-µ_1| < |off(µ_2)-off(µ_1)|$
   - We should find a way to incorporate this effect into our calculations; e.g. by enlarging the confidence interval in some sensible way
   - What if $off(µ*)$ is a multiplier rather than a constant added to the raw value?
+  - Idea: Use a regression (linear?) on the correlation between the two measurements; predict what mean score difference
+    the resulting formula would yield on raw values of a certain range (e.g. where r such that score(r) ∈ [0.1; 0.9];
+    or r ∈ [r/a; r*a] or something). Alternatively, just take the mode of that curve?
+    + Let $R$ be the set of possible raw values, let $r ∈ R$
+    + Let $S ↔ [0; 1]$ be the set of possibles; $s ∈ S$
+    + Let $score(r) : R → S$ be the function mapping a raw values to score values
+    + Let $X, Y$ be the data points
+    + Let $T, U$ be the result of a continuous interpolation on $X and X$
+    + Let $d(r)$ be the result of a linear regression on $T - U$
+    + Let $f(r) : R → S = score(d(r)) - score(r)$ (that is the predicted difference between the score from Y and X given a specific raw baseline value;
+      and this is probably wrong because it does not really honor the fact that we are modeling both constant and linear effects; need to think
+      about this again)
+    + The value we are looking for, is the median of the function $f(r)$.
 * Experimental validation: Run many this entire construction many times on different machines and see if the variance over many runs is sufficiently small
 
 ## Low Impact/Difficulty
