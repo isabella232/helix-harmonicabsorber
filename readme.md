@@ -86,6 +86,9 @@ Report 11 – Has been lost; in the great…ahem…deletion? Stuff. Dunno.
 [Report 24](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00023_2021-02-20T12:14:57.249Z/readme.md) - Analysis of data from rep 16 with three sigma confidence and new statistical methodology  
 [Report 25](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00025_2021-02-22T21:38:55.199Z/readme.md) – Reanalysis of data from report 9  
 [Report 26](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00026_2021-02-22T21:38:55.199Z/readme.md) – Like report 25 (raw data from rep 16) but with logarithmic X axis on score estimation plots. The data looks like we can now be confident enough to require just a 5 run minimum sample and rely on our statistical methods for indication when there are data points required.  
+[Report 27](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00027_2021-02-24T12-40-31.850Z/readme.md) – First real usage of harmonicobserver.  
+[Report 28](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00028_2021-02-24T12-49-42.674Z/readme.md) – Repeat collection for report 27.  
+[Report 29](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00029_2021-02-24T13-36-40.390Z/readme.md) – Repeat collection for report 27 with caching enabled.  
 
 # Next Steps
 
