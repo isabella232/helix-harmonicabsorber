@@ -68,7 +68,6 @@ export const cacheRequest = async (proxychrome, req, resp, cycle, opts = {}) => 
   const key = `${req.method} ${req.fullUrl()}`;
   const file = `${cacheDir}/${sha256(key)}`;
   const metaFile = `${file}.meta.json`;
-  console.log("CACHE", { key, file, metaFile })
 
   try {
     const meta = JSON.parse(await readFile(metaFile, 'utf8'));

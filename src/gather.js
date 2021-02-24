@@ -72,6 +72,7 @@ const expNojs = deriveExp('nojs', expNocss, blockSuffix('js'));
 const expBlockAll = deriveExp('baseline', expCached, async (opts) =>
   await block({ ...opts, reason: 'Baseline test' }));
 
+const maxWorkers = 4;
 const experiments = [
   expPages, expCached, expNoadtech,
   expNomedia, expNocss, expNojs,
@@ -79,7 +80,6 @@ const experiments = [
 ];
 
 export const gather = async () => {
-  const maxWorkers = 4;
   const dir = `harmonicabsorber_${procTimeStr}`;
 
   const exps2 = pipe(
@@ -95,7 +95,6 @@ export const gather = async () => {
     // is to be used
     const expName = req.headers['x-harmonicobserver-experiment'];
     const exp = exps2.get(expName);
-    console.log("EXPERIMENT ", expName, " – ", exp, " – ", !isdef(exp));
     if (!isdef(exp))
       return;
 
@@ -161,7 +160,6 @@ export const gather = async () => {
       exp.todo--;
 
       const jobId = uuidgen();
-      console.log("--- ", worker.send);
       worker.send({
         what: 'lighthouse',
         out, url, jobId,

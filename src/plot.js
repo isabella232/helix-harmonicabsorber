@@ -1,6 +1,6 @@
 import { readFile, rm } from 'fs/promises';
 import lodash from 'lodash';
-import Svgo from 'svgo';
+import svgo from 'svgo';
 import {
   each, empty, map, first, enumerate, pipe,
   dict, values, flat, reject, curry,
@@ -133,8 +133,6 @@ const ident = (n) => {
 const doll = (n) => `$${ident(n)}`;
 
 const strlit = JSON.stringify;
-
-const svgo = new Svgo();
 
 class Gnuplot {
   static new(opts) {
