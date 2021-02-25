@@ -89,6 +89,9 @@ Report 11 – Has been lost; in the great…ahem…deletion? Stuff. Dunno.
 [Report 27](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00027_2021-02-24T12-40-31.850Z/readme.md) – First real usage of harmonicobserver.  
 [Report 28](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00028_2021-02-24T12-49-42.674Z/readme.md) – Repeat collection for report 27.  
 [Report 29](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00029_2021-02-24T13-36-40.390Z/readme.md) – Repeat collection for report 27 with caching enabled.  
+[Report 30](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00030_2021-02-24T20-42-31.540Z/readme.md) – Repeat collection for report 27 without concurrency.
+[Report 31](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00031_2021-02-24T23-18-18.084Z/readme.md) – Part of report 30
+[Report 32](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00032_2021-02-25T10-28-15.087Z/readme.md) – Part of report 30
 
 # Next Steps
 
