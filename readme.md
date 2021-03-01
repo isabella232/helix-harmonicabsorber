@@ -92,6 +92,7 @@ Report 11 – Has been lost; in the great…ahem…deletion? Stuff. Dunno.
 [Report 30](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00030_2021-02-24T20-42-31.540Z/readme.md) – Repeat collection for report 27 without concurrency.
 [Report 31](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00031_2021-02-24T23-18-18.084Z/readme.md) – Part of report 30
 [Report 32](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00032_2021-02-25T10-28-15.087Z/readme.md) – Part of report 30
+[Report 33](https://github.com/adobe-rnd/helix-harmonicabsorber-reports/tree/master/report_00033_2021-03-01T14-23-16.841Z//readme.md) – Inner CDN vs Outer CDN (outer is significantly slower)
 
 # Next Steps
 
